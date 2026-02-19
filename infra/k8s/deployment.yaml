@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: platform
+  template:
+    metadata:
+      labels:
+        app: platform
+    spec:
+      containers:
+        - name: platform
+          image: ghcr.io/your-org/platform:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - secretRef:
+                name: platform-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform
+spec:
+  selector:
+    app: platform
+  ports:
+    - port: 80
+      targetPort: 3000

@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-leptos
+        run: cargo install cargo-leptos --locked
+      - name: Build SSR
+        run: cargo build -p platform --features ssr
+      - name: Build Hydrate (Wasm)
+        run: cargo build -p platform --no-default-features --features hydrate --target wasm32-unknown-unknown
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings

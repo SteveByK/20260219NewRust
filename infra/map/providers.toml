@@ -1,0 +1,10 @@
+[map]
+renderer = "maplibre"
+vector_tiles = "pmtiles"
+tile_storage = "cloudflare_r2"
+osm_source = "openstreetmap"
+overpass_api = "https://overpass-api.de/api/interpreter"
+
+[geocoding]
+primary = "nominatim-selfhosted"
+fallback = "photon"

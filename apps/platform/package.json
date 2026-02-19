@@ -1,0 +1,11 @@
+{
+  "name": "platform-frontend",
+  "private": true,
+  "scripts": {
+    "tailwind:build": "tailwindcss -i ./style/tailwind.css -o ./style/output.css --minify",
+    "tailwind:watch": "tailwindcss -i ./style/tailwind.css -o ./style/output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
