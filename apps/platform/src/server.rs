@@ -240,10 +240,7 @@ pub mod services {
 
                                 if let shared::RealtimePacket::Position(mut pos) = packet {
                                     pos.user_id = auth_user;
-                                    let normalized = shared::RealtimePacket::Position(pos.clone());
-                                    if let Ok(payload) = rmp_serde::to_vec(&normalized) {
-                                        let _ = services::realtime::ingest_position(&app, auth_user, pos.lon, pos.lat).await;
-                                    }
+                                    let _ = services::realtime::ingest_position(&app, auth_user, pos.lon, pos.lat).await;
                                 }
                             }
                             Some(Ok(Message::Close(_))) | None => break,
