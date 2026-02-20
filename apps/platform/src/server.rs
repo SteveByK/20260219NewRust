@@ -118,12 +118,18 @@ pub mod services {
         pub struct NearbyUser {
             pub user_id: String,
             pub distance_m: f64,
+            pub lon: f64,
+            pub lat: f64,
         }
 
         pub async fn nearby_users(pg: &PgPool, lon: f64, lat: f64, radius_m: i32) -> anyhow::Result<Vec<NearbyUser>> {
             let rows = sqlx::query(
                 r#"
-                SELECT user_id::text, ST_Distance(location, ST_Point($1, $2)::geography) AS distance
+                SELECT
+                    user_id::text,
+                    ST_Distance(location, ST_Point($1, $2)::geography) AS distance,
+                    ST_X(location::geometry) AS lon,
+                    ST_Y(location::geometry) AS lat
                 FROM user_locations
                 WHERE ST_DWithin(location, ST_Point($1, $2)::geography, $3)
                 ORDER BY distance
@@ -141,6 +147,8 @@ pub mod services {
                 .map(|r| NearbyUser {
                     user_id: r.get::<String, _>("user_id"),
                     distance_m: r.get::<f64, _>("distance"),
+                    lon: r.get::<f64, _>("lon"),
+                    lat: r.get::<f64, _>("lat"),
                 })
                 .collect())
         }

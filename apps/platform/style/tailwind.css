@@ -5,3 +5,12 @@
 html, body {
   @apply h-full w-full bg-slate-950 text-slate-100;
 }
+
+#map {
+  @apply bg-slate-950;
+}
+
+.maplibregl-ctrl-bottom-right,
+.maplibregl-ctrl-bottom-left {
+  display: none;
+}
