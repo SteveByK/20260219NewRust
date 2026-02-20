@@ -235,13 +235,12 @@ pub mod services {
             sqlx::query(
                 r#"
                 INSERT INTO room_messages(room_id, from_user, message, created_at)
-                VALUES ($1, $2, $3, $4)
+                VALUES ($1, $2, $3, now())
                 "#,
             )
             .bind(&msg.room_id)
             .bind(msg.from_user)
             .bind(&msg.text)
-            .bind(msg.ts)
             .execute(pg)
             .await?;
             Ok(())
@@ -895,6 +894,18 @@ async fn graphql_handler(
     schema.execute(req.into_inner()).await.into()
 }
 
+async fn bootstrap_schema(pg: &PgPool) -> anyhow::Result<()> {
+    let ddl = include_str!("../../../infra/sql/init.sql");
+    for statement in ddl.split(';') {
+        let sql = statement.trim();
+        if sql.is_empty() {
+            continue;
+        }
+        sqlx::query(sql).execute(pg).await?;
+    }
+    Ok(())
+}
+
 pub async fn run() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("info"))
@@ -907,6 +918,7 @@ pub async fn run() -> anyhow::Result<()> {
     let clickhouse_url = std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://127.0.0.1:8123".into());
 
     let pg = PgPool::connect(&database_url).await?;
+    bootstrap_schema(&pg).await?;
     let redis = RedisPoolConfig::from_url(redis_url).create_pool(Some(Runtime::Tokio1))?;
     let nats = async_nats::connect(nats_url).await?;
     let jetstream = jetstream::new(nats.clone());

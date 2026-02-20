@@ -34,3 +34,18 @@
 docker compose up -d
 cargo leptos watch
 ```
+
+## 一键联调脚本
+
+已提供端到端联调脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\e2e-social-flow.ps1
+```
+
+该脚本会自动验证：
+
+- 登录/注册
+- 聊天发送
+- 未读计数变化 + 标记已读
+- 邀请发送 + 待处理列表 + 接受邀请
