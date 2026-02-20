@@ -6021,6 +6021,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",

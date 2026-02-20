@@ -19,8 +19,17 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteEvent {
+    pub from_user: Uuid,
+    pub to_user: Uuid,
+    pub mode: String,
+    pub ts: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RealtimePacket {
     Position(PositionUpdate),
     Chat(ChatMessage),
+    Invite(InviteEvent),
     Heartbeat,
 }

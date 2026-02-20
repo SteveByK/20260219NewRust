@@ -228,6 +228,55 @@ pub mod services {
         }
     }
 
+    pub mod chat {
+        use super::*;
+
+        pub async fn insert_message(pg: &PgPool, msg: &shared::ChatMessage) -> anyhow::Result<()> {
+            sqlx::query(
+                r#"
+                INSERT INTO room_messages(room_id, from_user, message, created_at)
+                VALUES ($1, $2, $3, $4)
+                "#,
+            )
+            .bind(&msg.room_id)
+            .bind(msg.from_user)
+            .bind(&msg.text)
+            .bind(msg.ts)
+            .execute(pg)
+            .await?;
+            Ok(())
+        }
+
+        pub(crate) async fn history(pg: &PgPool, room_id: &str, limit: i64) -> anyhow::Result<Vec<ChatHistoryItem>> {
+            let rows = sqlx::query(
+                r#"
+                SELECT room_id, from_user::text AS from_user, message, created_at
+                FROM room_messages
+                WHERE room_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(room_id)
+            .bind(limit)
+            .fetch_all(pg)
+            .await?;
+
+            let mut messages = rows
+                .into_iter()
+                .map(|row| ChatHistoryItem {
+                    room_id: row.get::<String, _>("room_id"),
+                    from_user: row.get::<String, _>("from_user"),
+                    text: row.get::<String, _>("message"),
+                    ts: row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                })
+                .collect::<Vec<_>>();
+
+            messages.reverse();
+            Ok(messages)
+        }
+    }
+
     pub mod game {
         use super::*;
 
@@ -249,6 +298,20 @@ pub mod services {
                                 if let shared::RealtimePacket::Position(mut pos) = packet {
                                     pos.user_id = auth_user;
                                     let _ = services::realtime::ingest_position(&app, auth_user, pos.lon, pos.lat).await;
+                                } else if let shared::RealtimePacket::Chat(mut chat) = packet {
+                                    chat.from_user = auth_user;
+                                    if chat.room_id.trim().is_empty() {
+                                        chat.room_id = "global".to_string();
+                                    }
+                                    let _ = services::chat::insert_message(&app.pg, &chat).await;
+                                    if let Ok(payload) = rmp_serde::to_vec(&shared::RealtimePacket::Chat(chat)) {
+                                        let _ = app.realtime_tx.send(payload);
+                                    }
+                                } else if let shared::RealtimePacket::Invite(mut invite) = packet {
+                                    invite.from_user = auth_user;
+                                    if let Ok(payload) = rmp_serde::to_vec(&shared::RealtimePacket::Invite(invite)) {
+                                        let _ = app.realtime_tx.send(payload);
+                                    }
                                 }
                             }
                             Some(Ok(Message::Close(_))) | None => break,
@@ -297,6 +360,33 @@ struct PositionBody {
     token: String,
     lon: f64,
     lat: f64,
+}
+
+#[derive(Deserialize)]
+struct SendChatBody {
+    token: String,
+    room_id: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct ChatHistoryQuery {
+    room_id: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ChatHistoryItem {
+    room_id: String,
+    from_user: String,
+    text: String,
+    ts: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Deserialize)]
+struct InviteBody {
+    token: String,
+    to_user: String,
+    mode: String,
 }
 
 #[derive(Serialize)]
@@ -399,6 +489,90 @@ async fn ingest_position_http(
     }
 }
 
+async fn send_chat(
+    State(app): State<Arc<state::AppState>>,
+    Json(body): Json<SendChatBody>,
+) -> impl IntoResponse {
+    let Ok(user_id) = services::auth::parse_jwt(&body.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+
+    let room_id = if body.room_id.trim().is_empty() {
+        "global".to_string()
+    } else {
+        body.room_id
+    };
+
+    let message = shared::ChatMessage {
+        room_id,
+        from_user: user_id,
+        text,
+        ts: chrono::Utc::now(),
+    };
+
+    if services::chat::insert_message(&app.pg, &message).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    if let Ok(payload) = rmp_serde::to_vec(&shared::RealtimePacket::Chat(message)) {
+        let _ = app.realtime_tx.send(payload);
+    }
+
+    StatusCode::ACCEPTED
+}
+
+async fn chat_history(
+    State(app): State<Arc<state::AppState>>,
+    Query(query): Query<ChatHistoryQuery>,
+) -> impl IntoResponse {
+    let room_id = if query.room_id.trim().is_empty() {
+        "global".to_string()
+    } else {
+        query.room_id
+    };
+
+    match services::chat::history(&app.pg, &room_id, 100).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn send_invite(
+    State(app): State<Arc<state::AppState>>,
+    Json(body): Json<InviteBody>,
+) -> impl IntoResponse {
+    let Ok(from_user) = services::auth::parse_jwt(&body.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    let Ok(to_user) = Uuid::parse_str(&body.to_user) else {
+        return StatusCode::BAD_REQUEST;
+    };
+
+    let mode = if body.mode.trim().is_empty() {
+        "duel".to_string()
+    } else {
+        body.mode
+    };
+
+    let packet = shared::RealtimePacket::Invite(shared::InviteEvent {
+        from_user,
+        to_user,
+        mode,
+        ts: chrono::Utc::now(),
+    });
+
+    if let Ok(payload) = rmp_serde::to_vec(&packet) {
+        let _ = app.realtime_tx.send(payload);
+    }
+
+    StatusCode::ACCEPTED
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
@@ -497,6 +671,9 @@ pub async fn run() -> anyhow::Result<()> {
         .route("/api/register", post(register))
         .route("/api/login", post(login))
         .route("/api/position", post(ingest_position_http))
+        .route("/api/chat/send", post(send_chat))
+        .route("/api/chat/history", get(chat_history))
+        .route("/api/invite/send", post(send_invite))
         .route("/graphql", post(graphql_handler))
         .route("/ws", get(ws_handler))
         .route("/metrics", get(|| async move { metric_handle.render() }))
