@@ -1,4 +1,4 @@
-# Railway service templates (Platform / NATS / Loki / Prometheus / Grafana)
+# Railway service templates (Platform / Postgres / Redis / ClickHouse / NATS / Loki / Prometheus / Grafana)
 
 These templates lock the startup behavior into Dockerfiles so Railway won't fail due to mis-typed Start Command values.
 
@@ -20,6 +20,43 @@ Required environment variables:
 Quick copy template:
 
 - `infra/railway/platform/railway.env.example`
+
+Recommended internal URLs (when service names are default):
+
+- `DATABASE_URL=postgres://postgres:<POSTGRES_PASSWORD>@postgres:5432/platform`
+- `REDIS_URL=redis://redis:6379`
+- `NATS_URL=nats://nats:4222`
+- `CLICKHOUSE_URL=http://clickhouse:8123`
+
+## postgres
+
+- Service root: `infra/railway/postgres`
+- Runtime image: `postgis/postgis:16-3.5`
+- Purpose: PostgreSQL + PostGIS extension support
+
+Template:
+
+- `infra/railway/postgres/railway.env.example`
+
+## redis
+
+- Service root: `infra/railway/redis`
+- Runtime image: `valkey/valkey:7`
+- Purpose: presence cache / GEO / pub-sub
+
+Template:
+
+- `infra/railway/redis/railway.env.example`
+
+## clickhouse
+
+- Service root: `infra/railway/clickhouse`
+- Runtime image: `clickhouse/clickhouse-server:24.12`
+- Purpose: analytical/event storage
+
+Template:
+
+- `infra/railway/clickhouse/railway.env.example`
 
 ## nats
 
@@ -59,6 +96,9 @@ Optional variables template:
 1. Create a service from this repo.
 2. Set **Root Directory** to one of:
    - `infra/railway/platform`
+   - `infra/railway/postgres`
+   - `infra/railway/redis`
+   - `infra/railway/clickhouse`
    - `infra/railway/nats`
    - `infra/railway/loki`
    - `infra/railway/prometheus`
@@ -70,3 +110,8 @@ Optional variables template:
 
 Your previous logs show Railway trying to execute argument-only strings (`-js`, `-config.file=...`) as binaries.
 With these Dockerfiles, the base image entrypoint receives the args correctly.
+
+## Persistence note
+
+For stateful services (`postgres`, `redis`, `clickhouse`, optional `grafana`), attach persistent volumes in Railway.
+Without volumes, restart/redeploy can lose data.

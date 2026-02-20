@@ -94,6 +94,9 @@ nats-server -js -m 8222
 已提供 Railway 模板目录，可直接在 Railway 设置对应 `Root Directory` 部署：
 
 - `infra/railway/platform`
+- `infra/railway/postgres`
+- `infra/railway/redis`
+- `infra/railway/clickhouse`
 - `infra/railway/nats`
 - `infra/railway/loki`
 - `infra/railway/prometheus`
@@ -104,5 +107,8 @@ nats-server -js -m 8222
 变量模板示例：
 
 - `infra/railway/platform/railway.env.example`
+- `infra/railway/postgres/railway.env.example`
+- `infra/railway/redis/railway.env.example`
+- `infra/railway/clickhouse/railway.env.example`
 - `infra/railway/grafana/railway.env.example`
 - `infra/railway/prometheus/railway.env.example`
