@@ -4,10 +4,11 @@ These templates lock the startup behavior into Dockerfiles so Railway won't fail
 
 ## platform
 
-- Service root: `infra/railway/platform`
+- Service root: repository root `.`
 - Runtime image: distroless with compiled `platform-server`
 - Health check: `/health`
 - Port binding: uses Railway `PORT` env automatically
+- Build method: Dockerfile (`Dockerfile` at repository root)
 
 Required environment variables:
 
@@ -95,7 +96,7 @@ Optional variables template:
 
 1. Create a service from this repo.
 2. Set **Root Directory** to one of:
-   - `infra/railway/platform`
+   - `.` (platform)
    - `infra/railway/postgres`
    - `infra/railway/redis`
    - `infra/railway/clickhouse`
@@ -106,6 +107,17 @@ Optional variables template:
 3. Leave Start Command empty (Dockerfile CMD is used).
 4. Redeploy.
 
+## Important: avoid Nixpacks for platform
+
+If platform Build Logs show `cargo build --release` and workspace-root errors (e.g. `failed to find a workspace root`), Railway is using Nixpacks, not Dockerfile.
+
+Fix steps:
+
+1. platform service -> **Settings** -> set **Root Directory** to `.`
+2. Ensure builder is Dockerfile (repo root has `Dockerfile` + `railway.toml`)
+3. Clear Start Command
+4. Redeploy platform
+
 ## Why this fixes your error
 
 Your previous logs show Railway trying to execute argument-only strings (`-js`, `-config.file=...`) as binaries.
@@ -115,3 +127,8 @@ With these Dockerfiles, the base image entrypoint receives the args correctly.
 
 For stateful services (`postgres`, `redis`, `clickhouse`, optional `grafana`), attach persistent volumes in Railway.
 Without volumes, restart/redeploy can lose data.
+
+## Troubleshooting runbook
+
+- See `infra/railway/RUNBOOK.md` for dependency-aware triage, failure signatures, and a 10-minute recovery checklist.
+- See `infra/railway/RUNBOOK_UI.md` for step-by-step Railway dashboard click paths.

@@ -93,7 +93,7 @@ nats-server -js -m 8222
 
 已提供 Railway 模板目录，可直接在 Railway 设置对应 `Root Directory` 部署：
 
-- `infra/railway/platform`
+- `.`（platform 服务使用仓库根目录 + 根 Dockerfile）
 - `infra/railway/postgres`
 - `infra/railway/redis`
 - `infra/railway/clickhouse`
