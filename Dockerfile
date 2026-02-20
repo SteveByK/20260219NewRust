@@ -1,4 +1,4 @@
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.90-bookworm AS builder
 WORKDIR /app
 
 ENV CARGO_BUILD_JOBS=2 \
