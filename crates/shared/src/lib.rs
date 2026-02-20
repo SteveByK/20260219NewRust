@@ -20,9 +20,11 @@ pub struct ChatMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InviteEvent {
+    pub invite_id: Uuid,
     pub from_user: Uuid,
     pub to_user: Uuid,
     pub mode: String,
+    pub status: String,
     pub ts: DateTime<Utc>,
 }
 

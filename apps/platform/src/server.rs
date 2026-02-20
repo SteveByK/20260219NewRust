@@ -275,6 +275,136 @@ pub mod services {
             messages.reverse();
             Ok(messages)
         }
+
+        pub async fn mark_read(pg: &PgPool, room_id: &str, user_id: Uuid) -> anyhow::Result<()> {
+            sqlx::query(
+                r#"
+                INSERT INTO room_member_reads(room_id, user_id, last_read_at)
+                VALUES ($1, $2, now())
+                ON CONFLICT (room_id, user_id)
+                DO UPDATE SET last_read_at = now()
+                "#,
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .execute(pg)
+            .await?;
+            Ok(())
+        }
+
+        pub async fn unread_count(pg: &PgPool, room_id: &str, user_id: Uuid) -> anyhow::Result<i64> {
+            let row = sqlx::query(
+                r#"
+                WITH marker AS (
+                  SELECT last_read_at
+                  FROM room_member_reads
+                  WHERE room_id = $1 AND user_id = $2
+                )
+                SELECT COUNT(*)::bigint AS unread_count
+                FROM room_messages
+                WHERE room_id = $1
+                  AND from_user <> $2
+                  AND created_at > COALESCE((SELECT last_read_at FROM marker), to_timestamp(0))
+                "#,
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .fetch_one(pg)
+            .await?;
+
+            Ok(row.get::<i64, _>("unread_count"))
+        }
+
+        pub async fn room_members(pg: &PgPool, room_id: &str) -> anyhow::Result<Vec<Uuid>> {
+            let rows = sqlx::query(
+                r#"
+                SELECT DISTINCT from_user
+                FROM room_messages
+                WHERE room_id = $1
+                ORDER BY from_user
+                "#,
+            )
+            .bind(room_id)
+            .fetch_all(pg)
+            .await?;
+
+            Ok(rows
+                .into_iter()
+                .map(|r| r.get::<Uuid, _>("from_user"))
+                .collect())
+        }
+    }
+
+    pub mod invite {
+        use super::*;
+
+        pub async fn create(pg: &PgPool, from_user: Uuid, to_user: Uuid, mode: &str) -> anyhow::Result<Uuid> {
+            let invite_id = Uuid::new_v4();
+            sqlx::query(
+                r#"
+                INSERT INTO invites(id, from_user, to_user, mode, status, created_at)
+                VALUES ($1, $2, $3, $4, 'pending', now())
+                "#,
+            )
+            .bind(invite_id)
+            .bind(from_user)
+            .bind(to_user)
+            .bind(mode)
+            .execute(pg)
+            .await?;
+            Ok(invite_id)
+        }
+
+        pub async fn respond(pg: &PgPool, invite_id: Uuid, to_user: Uuid, status: &str) -> anyhow::Result<Option<(Uuid, Uuid, String)>> {
+            let row = sqlx::query(
+                r#"
+                UPDATE invites
+                SET status = $1, responded_at = now()
+                WHERE id = $2 AND to_user = $3 AND status = 'pending'
+                RETURNING from_user, to_user, mode
+                "#,
+            )
+            .bind(status)
+            .bind(invite_id)
+            .bind(to_user)
+            .fetch_optional(pg)
+            .await?;
+
+            Ok(row.map(|r| {
+                (
+                    r.get::<Uuid, _>("from_user"),
+                    r.get::<Uuid, _>("to_user"),
+                    r.get::<String, _>("mode"),
+                )
+            }))
+        }
+
+        pub(crate) async fn pending_for_user(pg: &PgPool, to_user: Uuid) -> anyhow::Result<Vec<InviteItem>> {
+            let rows = sqlx::query(
+                r#"
+                SELECT id::text AS invite_id, from_user::text AS from_user, to_user::text AS to_user, mode, status, created_at
+                FROM invites
+                WHERE to_user = $1 AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 100
+                "#,
+            )
+            .bind(to_user)
+            .fetch_all(pg)
+            .await?;
+
+            Ok(rows
+                .into_iter()
+                .map(|r| InviteItem {
+                    invite_id: r.get::<String, _>("invite_id"),
+                    from_user: r.get::<String, _>("from_user"),
+                    to_user: r.get::<String, _>("to_user"),
+                    mode: r.get::<String, _>("mode"),
+                    status: r.get::<String, _>("status"),
+                    ts: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                })
+                .collect())
+        }
     }
 
     pub mod game {
@@ -374,6 +504,31 @@ struct ChatHistoryQuery {
     room_id: String,
 }
 
+#[derive(Deserialize)]
+struct RoomStateQuery {
+    token: String,
+    room_id: String,
+}
+
+#[derive(Serialize)]
+struct RoomMemberState {
+    user_id: String,
+    online: bool,
+}
+
+#[derive(Serialize)]
+struct RoomStateResponse {
+    room_id: String,
+    unread_count: i64,
+    members: Vec<RoomMemberState>,
+}
+
+#[derive(Deserialize)]
+struct MarkReadBody {
+    token: String,
+    room_id: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct ChatHistoryItem {
     room_id: String,
@@ -387,6 +542,28 @@ struct InviteBody {
     token: String,
     to_user: String,
     mode: String,
+}
+
+#[derive(Deserialize)]
+struct InviteRespondBody {
+    token: String,
+    invite_id: String,
+    action: String,
+}
+
+#[derive(Deserialize)]
+struct InvitePendingQuery {
+    token: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct InviteItem {
+    invite_id: String,
+    from_user: String,
+    to_user: String,
+    mode: String,
+    status: String,
+    ts: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Serialize)]
@@ -542,6 +719,70 @@ async fn chat_history(
     }
 }
 
+async fn chat_room_state(
+    State(app): State<Arc<state::AppState>>,
+    Query(query): Query<RoomStateQuery>,
+) -> impl IntoResponse {
+    let Ok(user_id) = services::auth::parse_jwt(&query.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
+    let room_id = if query.room_id.trim().is_empty() {
+        "global".to_string()
+    } else {
+        query.room_id
+    };
+
+    let unread_count = match services::chat::unread_count(&app.pg, &room_id, user_id).await {
+        Ok(value) => value,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let member_ids = match services::chat::room_members(&app.pg, &room_id).await {
+        Ok(ids) => ids,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let mut members = Vec::with_capacity(member_ids.len());
+    if let Ok(mut conn) = app.redis.get().await {
+        for id in member_ids {
+            let key = format!("presence:{id}");
+            let online = conn.exists::<_, bool>(key).await.unwrap_or(false);
+            members.push(RoomMemberState {
+                user_id: id.to_string(),
+                online,
+            });
+        }
+    }
+
+    Json(RoomStateResponse {
+        room_id,
+        unread_count,
+        members,
+    })
+    .into_response()
+}
+
+async fn chat_mark_read(
+    State(app): State<Arc<state::AppState>>,
+    Json(body): Json<MarkReadBody>,
+) -> impl IntoResponse {
+    let Ok(user_id) = services::auth::parse_jwt(&body.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+
+    let room_id = if body.room_id.trim().is_empty() {
+        "global".to_string()
+    } else {
+        body.room_id
+    };
+
+    match services::chat::mark_read(&app.pg, &room_id, user_id).await {
+        Ok(_) => StatusCode::ACCEPTED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 async fn send_invite(
     State(app): State<Arc<state::AppState>>,
     Json(body): Json<InviteBody>,
@@ -559,13 +800,72 @@ async fn send_invite(
         body.mode
     };
 
+    let Ok(invite_id) = services::invite::create(&app.pg, from_user, to_user, &mode).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+
     let packet = shared::RealtimePacket::Invite(shared::InviteEvent {
+        invite_id,
         from_user,
         to_user,
         mode,
+        status: "pending".to_string(),
         ts: chrono::Utc::now(),
     });
 
+    if let Ok(payload) = rmp_serde::to_vec(&packet) {
+        let _ = app.realtime_tx.send(payload);
+    }
+
+    StatusCode::ACCEPTED
+}
+
+async fn invite_pending(
+    State(app): State<Arc<state::AppState>>,
+    Query(query): Query<InvitePendingQuery>,
+) -> impl IntoResponse {
+    let Ok(user_id) = services::auth::parse_jwt(&query.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
+    match services::invite::pending_for_user(&app.pg, user_id).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn invite_respond(
+    State(app): State<Arc<state::AppState>>,
+    Json(body): Json<InviteRespondBody>,
+) -> impl IntoResponse {
+    let Ok(to_user) = services::auth::parse_jwt(&body.token, &app.jwt) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    let Ok(invite_id) = Uuid::parse_str(&body.invite_id) else {
+        return StatusCode::BAD_REQUEST;
+    };
+
+    let status = match body.action.as_str() {
+        "accept" => "accepted",
+        "reject" => "rejected",
+        _ => return StatusCode::BAD_REQUEST,
+    };
+
+    let Ok(updated) = services::invite::respond(&app.pg, invite_id, to_user, status).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+    let Some((from_user, to_user, mode)) = updated else {
+        return StatusCode::NOT_FOUND;
+    };
+
+    let packet = shared::RealtimePacket::Invite(shared::InviteEvent {
+        invite_id,
+        from_user,
+        to_user,
+        mode,
+        status: status.to_string(),
+        ts: chrono::Utc::now(),
+    });
     if let Ok(payload) = rmp_serde::to_vec(&packet) {
         let _ = app.realtime_tx.send(payload);
     }
@@ -673,7 +973,11 @@ pub async fn run() -> anyhow::Result<()> {
         .route("/api/position", post(ingest_position_http))
         .route("/api/chat/send", post(send_chat))
         .route("/api/chat/history", get(chat_history))
+        .route("/api/chat/room-state", get(chat_room_state))
+        .route("/api/chat/mark-read", post(chat_mark_read))
         .route("/api/invite/send", post(send_invite))
+        .route("/api/invite/pending", get(invite_pending))
+        .route("/api/invite/respond", post(invite_respond))
         .route("/graphql", post(graphql_handler))
         .route("/ws", get(ws_handler))
         .route("/metrics", get(|| async move { metric_handle.render() }))

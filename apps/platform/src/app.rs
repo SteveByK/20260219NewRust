@@ -39,6 +39,29 @@ struct ChatHistoryItem {
     ts: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct RoomMemberState {
+    user_id: String,
+    online: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RoomStateResponse {
+    room_id: String,
+    unread_count: i64,
+    members: Vec<RoomMemberState>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct InviteItem {
+    invite_id: String,
+    from_user: String,
+    to_user: String,
+    mode: String,
+    status: String,
+    ts: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone)]
 struct Session {
     token: String,
@@ -95,7 +118,8 @@ fn connect_realtime(
     refresh_tick: RwSignal<u64>,
     status: RwSignal<String>,
     chat_messages: RwSignal<Vec<String>>,
-    invites: RwSignal<Vec<String>>,
+    invite_events: RwSignal<Vec<String>>,
+    pending_invites: RwSignal<Vec<InviteItem>>,
 ) {
     let Some(url) = ws_url(&token) else {
         status.set("WebSocket 地址生成失败".to_string());
@@ -129,10 +153,12 @@ fn connect_realtime(
 
     let on_msg_tick = refresh_tick;
     let on_msg_chat = chat_messages;
-    let on_msg_invites = invites;
+    let on_msg_invite_events = invite_events;
+    let on_msg_pending_invites = pending_invites;
+    let my_uid = user_id.clone();
+
     let on_message = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
-        let array_buf = event.data();
-        if let Ok(buf) = array_buf.dyn_into::<js_sys::ArrayBuffer>() {
+        if let Ok(buf) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
             let bytes = js_sys::Uint8Array::new(&buf).to_vec();
             if let Ok(packet) = rmp_serde::from_slice::<shared::RealtimePacket>(&bytes) {
                 match packet {
@@ -151,16 +177,40 @@ fn connect_realtime(
                         });
                     }
                     shared::RealtimePacket::Invite(inv) => {
-                        on_msg_invites.update(|list| {
-                            list.push(format!(
-                                "邀请 {} -> {} [{}]",
-                                inv.from_user.to_string().chars().take(8).collect::<String>(),
-                                inv.to_user.to_string().chars().take(8).collect::<String>(),
-                                inv.mode
-                            ));
-                            if list.len() > 80 {
-                                let keep_from = list.len().saturating_sub(80);
+                        let from_id = inv.from_user.to_string();
+                        let to_id = inv.to_user.to_string();
+                        let summary = format!(
+                            "邀请[{}] {} -> {} [{}|{}]",
+                            inv.invite_id,
+                            from_id.chars().take(8).collect::<String>(),
+                            to_id.chars().take(8).collect::<String>(),
+                            inv.mode,
+                            inv.status
+                        );
+
+                        on_msg_invite_events.update(|list| {
+                            list.push(summary);
+                            if list.len() > 120 {
+                                let keep_from = list.len().saturating_sub(120);
                                 *list = list[keep_from..].to_vec();
+                            }
+                        });
+
+                        on_msg_pending_invites.update(|list| {
+                            if inv.status == "pending" && to_id == my_uid {
+                                let incoming = InviteItem {
+                                    invite_id: inv.invite_id.to_string(),
+                                    from_user: from_id,
+                                    to_user: to_id,
+                                    mode: inv.mode,
+                                    status: inv.status,
+                                    ts: inv.ts,
+                                };
+                                if !list.iter().any(|it| it.invite_id == incoming.invite_id) {
+                                    list.push(incoming);
+                                }
+                            } else {
+                                list.retain(|it| it.invite_id != inv.invite_id.to_string());
                             }
                         });
                     }
@@ -168,6 +218,7 @@ fn connect_realtime(
                 }
             }
         }
+
         on_msg_tick.update(|v| *v += 1);
     }) as Box<dyn FnMut(_)>);
     ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
@@ -254,6 +305,7 @@ pub fn HomePage() -> impl IntoView {
 
     let chat_messages = RwSignal::new(Vec::<String>::new());
     let invite_events = RwSignal::new(Vec::<String>::new());
+    let pending_invites = RwSignal::new(Vec::<InviteItem>::new());
 
     #[cfg(feature = "hydrate")]
     Effect::new(|_| {
@@ -272,6 +324,38 @@ pub fn HomePage() -> impl IntoView {
             let _ = tick;
             let (lon, lat) = my_position.get();
             query_nearby(lon, lat, 5_000).await.ok()
+        }
+    });
+
+    let room_state: LocalResource<Option<RoomStateResponse>> = LocalResource::new(move || {
+        let tick = refresh_tick.get();
+        let room = room_id.get();
+        let session_value = session.get();
+
+        async move {
+            #[cfg(feature = "hydrate")]
+            {
+                if let Some(s) = session_value {
+                    let url = format!(
+                        "/api/chat/room-state?token={}&room_id={}",
+                        urlencoding::encode(&s.token),
+                        urlencoding::encode(&room)
+                    );
+                    let response = match gloo_net::http::Request::get(&url).send().await {
+                        Ok(resp) => resp,
+                        Err(_) => return None,
+                    };
+                    return response.json::<RoomStateResponse>().await.ok();
+                }
+                let _ = tick;
+                None
+            }
+
+            #[cfg(not(feature = "hydrate"))]
+            {
+                let _ = (tick, room, session_value);
+                None
+            }
         }
     });
 
@@ -305,6 +389,7 @@ pub fn HomePage() -> impl IntoView {
             let tick = refresh_tick;
             let chat_state = chat_messages;
             let invite_state = invite_events;
+            let pending_state = pending_invites;
 
             leptos::task::spawn_local(async move {
                 status_setter.set("登录中...".to_string());
@@ -361,24 +446,36 @@ pub fn HomePage() -> impl IntoView {
                     return;
                 }
 
+                let token = final_auth.token.clone();
+                let user_id = final_auth.user_id.clone();
+                let username = final_auth.username.clone();
+
                 session_setter.set(Some(Session {
-                    token: final_auth.token.clone(),
-                    user_id: final_auth.user_id.clone(),
-                    username: final_auth.username.clone(),
+                    token: token.clone(),
+                    user_id: user_id.clone(),
+                    username: username.clone(),
                 }));
 
-                status_setter.set(format!("已登录：{}", final_auth.username));
+                let pending_url = format!("/api/invite/pending?token={}", urlencoding::encode(&token));
+                if let Ok(resp) = gloo_net::http::Request::get(&pending_url).send().await {
+                    if let Ok(rows) = resp.json::<Vec<InviteItem>>().await {
+                        pending_state.set(rows);
+                    }
+                }
+
+                status_setter.set(format!("已登录：{}", username));
                 tick.update(|v| *v += 1);
 
                 connect_realtime(
-                    final_auth.token,
-                    final_auth.user_id,
+                    token,
+                    user_id,
                     pos,
                     ws_state,
                     tick,
                     status_setter,
                     chat_state,
                     invite_state,
+                    pending_state,
                 );
             });
         }
@@ -458,6 +555,41 @@ pub fn HomePage() -> impl IntoView {
         }
     };
 
+    let on_mark_read = move |_| {
+        #[cfg(feature = "hydrate")]
+        {
+            let Some(s) = session.get() else {
+                status.set("请先登录".to_string());
+                return;
+            };
+
+            let payload = serde_json::json!({
+                "token": s.token,
+                "room_id": room_id.get(),
+            });
+
+            let status_setter = status;
+            let tick = refresh_tick;
+
+            leptos::task::spawn_local(async move {
+                let req = gloo_net::http::Request::post("/api/chat/mark-read")
+                    .header("content-type", "application/json")
+                    .body(payload.to_string());
+                match req {
+                    Ok(r) => {
+                        if r.send().await.is_ok() {
+                            status_setter.set("已标记为已读".to_string());
+                            tick.update(|v| *v += 1);
+                        } else {
+                            status_setter.set("标记已读失败".to_string());
+                        }
+                    }
+                    Err(_) => status_setter.set("已读请求构建失败".to_string()),
+                }
+            });
+        }
+    };
+
     let on_send_invite = move |_| {
         #[cfg(feature = "hydrate")]
         {
@@ -498,6 +630,50 @@ pub fn HomePage() -> impl IntoView {
         }
     };
 
+    let on_respond_invite = move |_invite_id: String, _action: &'static str| {
+        #[cfg(feature = "hydrate")]
+        {
+            let Some(s) = session.get() else {
+                status.set("请先登录".to_string());
+                return;
+            };
+
+            let payload = serde_json::json!({
+                "token": s.token,
+                "invite_id": _invite_id,
+                "action": _action,
+            });
+            let invite_id_key = payload["invite_id"].as_str().unwrap_or_default().to_string();
+
+            let status_setter = status;
+            let pending_state = pending_invites;
+
+            leptos::task::spawn_local(async move {
+                let req = gloo_net::http::Request::post("/api/invite/respond")
+                    .header("content-type", "application/json")
+                    .body(payload.to_string());
+
+                match req {
+                    Ok(r) => {
+                        if r.send().await.is_ok() {
+                            pending_state.update(|list| {
+                                list.retain(|it| it.invite_id != invite_id_key);
+                            });
+                            status_setter.set(if _action == "accept" {
+                                "邀请已接受".to_string()
+                            } else {
+                                "邀请已拒绝".to_string()
+                            });
+                        } else {
+                            status_setter.set("邀请响应失败".to_string());
+                        }
+                    }
+                    Err(_) => status_setter.set("邀请响应请求构建失败".to_string()),
+                }
+            });
+        }
+    };
+
     let online_count = move || {
         nearby
             .get()
@@ -506,15 +682,32 @@ pub fn HomePage() -> impl IntoView {
             .len()
     };
 
+    let unread_count = move || {
+        #[cfg(feature = "hydrate")]
+        {
+            match room_state.get() {
+                Some(wrapped) => wrapped.take().map(|s| s.unread_count).unwrap_or(0),
+                None => 0,
+            }
+        }
+
+        #[cfg(not(feature = "hydrate"))]
+        {
+            let _ = &room_state;
+            0
+        }
+    };
+
     view! {
         <div class="h-screen w-screen grid grid-rows-[auto_1fr] bg-slate-950 text-slate-100">
             <header class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/80 backdrop-blur">
                 <div>
                     <h1 class="text-lg font-semibold">"社交地图 + 实时通讯 + 高性能网页游戏"</h1>
-                    <p class="text-xs text-slate-400">"Leptos + MapLibre + WebSocket + Redis + PostGIS + Chat"</p>
+                    <p class="text-xs text-slate-400">"Leptos + MapLibre + WebSocket + Redis + PostGIS + Chat + Invite Workflow"</p>
                 </div>
                 <div class="text-sm flex items-center gap-4">
                     <span class="px-2 py-1 rounded border border-slate-700">{move || format!("在线: {}", online_count())}</span>
+                    <span class="px-2 py-1 rounded border border-slate-700">{move || format!("未读: {}", unread_count())}</span>
                     <span class=move || {
                         if ws_connected.get() {
                             "px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"
@@ -536,31 +729,51 @@ pub fn HomePage() -> impl IntoView {
                     <section class="rounded-lg border border-slate-700 p-3 space-y-3">
                         <h2 class="font-medium">"账号登录"</h2>
                         <div class="space-y-2">
-                            <input
-                                class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-2 text-sm"
-                                placeholder="用户名"
-                                prop:value=move || username.get()
-                                on:input=move |ev| username.set(event_target_value(&ev))
-                            />
-                            <input
-                                class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-2 text-sm"
-                                placeholder="密码"
-                                r#type="password"
-                                prop:value=move || password.get()
-                                on:input=move |ev| password.set(event_target_value(&ev))
-                            />
-                            <button class="w-full rounded bg-sky-500 hover:bg-sky-400 text-slate-950 font-medium py-2" on:click=on_login>
-                                "登录（不存在则自动注册）"
-                            </button>
+                            <input class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-2 text-sm" placeholder="用户名" prop:value=move || username.get() on:input=move |ev| username.set(event_target_value(&ev)) />
+                            <input class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-2 text-sm" placeholder="密码" r#type="password" prop:value=move || password.get() on:input=move |ev| password.set(event_target_value(&ev)) />
+                            <button class="w-full rounded bg-sky-500 hover:bg-sky-400 text-slate-950 font-medium py-2" on:click=on_login>"登录（不存在则自动注册）"</button>
                         </div>
                         <p class="text-xs text-slate-400">{move || status.get()}</p>
                         <Show when=move || session.get().is_some()>
                             <div class="text-xs text-slate-300 rounded border border-slate-700 p-2 space-y-1">
                                 <p>{move || format!("用户: {}", session.get().map(|s| s.username).unwrap_or_default())}</p>
                                 <p>{move || format!("ID: {}", session.get().map(|s| s.user_id).unwrap_or_default())}</p>
-                                <p>{move || format!("Token长度: {}", session.get().map(|s| s.token.len()).unwrap_or_default())}</p>
                             </div>
                         </Show>
+                    </section>
+
+                    <section class="rounded-lg border border-slate-700 p-3 space-y-3">
+                        <h2 class="font-medium">"房间状态"</h2>
+                        <div class="flex gap-2">
+                            <input class="flex-1 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs" placeholder="房间ID（默认global）" prop:value=move || room_id.get() on:input=move |ev| room_id.set(event_target_value(&ev)) />
+                            <button class="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs" on:click=on_load_history>"加载历史"</button>
+                            <button class="rounded bg-cyan-600 hover:bg-cyan-500 px-2 py-1 text-xs" on:click=on_mark_read>"标记已读"</button>
+                        </div>
+                        <div class="max-h-24 overflow-auto rounded border border-slate-800 p-2 text-xs text-slate-300 space-y-1">
+                            {move || {
+                                #[cfg(feature = "hydrate")]
+                                {
+                                    let state_opt = match room_state.get() {
+                                        Some(wrapped) => wrapped.take(),
+                                        None => None,
+                                    };
+                                    if let Some(state) = state_opt {
+                                        state.members.into_iter().map(|m| {
+                                            let short = m.user_id.chars().take(8).collect::<String>();
+                                            view! { <p>{format!("{} - {}", short, if m.online { "online" } else { "offline" })}</p> }
+                                        }).collect_view().into_any()
+                                    } else {
+                                        view! { <p class="text-slate-500">"暂无成员状态"</p> }.into_any()
+                                    }
+                                }
+
+                                #[cfg(not(feature = "hydrate"))]
+                                {
+                                    let _ = &room_state;
+                                    view! { <p class="text-slate-500">"SSR 模式不展示实时成员"</p> }.into_any()
+                                }
+                            }}
+                        </div>
                     </section>
 
                     <section class="rounded-lg border border-slate-700 p-3 space-y-3">
@@ -602,6 +815,28 @@ pub fn HomePage() -> impl IntoView {
                             <input class="flex-1 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs" placeholder="目标用户ID" prop:value=move || selected_user.get() on:input=move |ev| selected_user.set(event_target_value(&ev)) />
                             <button class="rounded bg-violet-500 hover:bg-violet-400 text-slate-950 font-medium px-3 py-1 text-xs" on:click=on_send_invite>"发邀请"</button>
                         </div>
+                        <div class="max-h-32 overflow-auto rounded border border-slate-800 p-2 text-xs text-slate-300 space-y-1">
+                            {move || pending_invites.get().into_iter().map(|inv| {
+                                let invite_id_accept = inv.invite_id.clone();
+                                let invite_id_reject = inv.invite_id.clone();
+                                view! {
+                                    <div class="border border-slate-700 rounded p-2 space-y-1">
+                                        <p>{format!("来自 {} 的 {} 邀请", inv.from_user.chars().take(8).collect::<String>(), inv.mode)}</p>
+                                        <p class="text-slate-500">{format!("{} | {}", inv.status, inv.ts.format("%H:%M:%S"))}</p>
+                                        <div class="flex gap-2">
+                                            <button class="rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-2 py-1" on:click={
+                                                let on_respond_invite = on_respond_invite;
+                                                move |_| on_respond_invite(invite_id_accept.clone(), "accept")
+                                            }>"接受"</button>
+                                            <button class="rounded bg-rose-500 hover:bg-rose-400 text-slate-950 px-2 py-1" on:click={
+                                                let on_respond_invite = on_respond_invite;
+                                                move |_| on_respond_invite(invite_id_reject.clone(), "reject")
+                                            }>"拒绝"</button>
+                                        </div>
+                                    </div>
+                                }
+                            }).collect_view()}
+                        </div>
                         <div class="max-h-24 overflow-auto rounded border border-slate-800 p-2 text-xs text-slate-300 space-y-1">
                             {move || invite_events.get().into_iter().rev().map(|line| view!{ <p>{line}</p>}).collect_view()}
                         </div>
@@ -609,10 +844,6 @@ pub fn HomePage() -> impl IntoView {
 
                     <section class="rounded-lg border border-slate-700 p-3 space-y-3">
                         <h2 class="font-medium">"聊天室"</h2>
-                        <div class="flex gap-2">
-                            <input class="flex-1 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs" placeholder="房间ID（默认global）" prop:value=move || room_id.get() on:input=move |ev| room_id.set(event_target_value(&ev)) />
-                            <button class="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs" on:click=on_load_history>"加载历史"</button>
-                        </div>
                         <div class="flex gap-2">
                             <input class="flex-1 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs" placeholder="输入消息" prop:value=move || chat_input.get() on:input=move |ev| chat_input.set(event_target_value(&ev)) />
                             <button class="rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-medium px-3 py-1 text-xs" on:click=on_send_chat>"发送"</button>
