@@ -17,6 +17,10 @@ Required environment variables:
 - `CLICKHOUSE_URL`
 - `JWT_SECRET` (or `JWT_PRIVATE_KEY_PEM` + `JWT_PUBLIC_KEY_PEM`)
 
+Quick copy template:
+
+- `infra/railway/platform/railway.env.example`
+
 ## nats
 
 - Service root: `infra/railway/nats`
@@ -34,12 +38,21 @@ Required environment variables:
 - Service root: `infra/railway/prometheus`
 - Runtime image: `prom/prometheus:v3.2.1`
 - Effective start: image default (`prometheus`) with copied config
+- Default scrape target: `platform:3000` (change if your platform service name differs)
+
+Optional template notes:
+
+- `infra/railway/prometheus/railway.env.example`
 
 ## grafana
 
 - Service root: `infra/railway/grafana`
 - Runtime image: `grafana/grafana:11.5.2`
 - Effective start: image default (`grafana-server`) with copied provisioning
+
+Optional variables template:
+
+- `infra/railway/grafana/railway.env.example`
 
 ## How to use in Railway
 

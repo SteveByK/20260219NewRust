@@ -5,4 +5,4 @@ scrape_configs:
   - job_name: platform
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:3000"]
+      - targets: ["platform:3000"]

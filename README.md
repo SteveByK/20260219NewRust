@@ -100,3 +100,9 @@ nats-server -js -m 8222
 - `infra/railway/grafana`
 
 详细说明见：`infra/railway/README.md`
+
+变量模板示例：
+
+- `infra/railway/platform/railway.env.example`
+- `infra/railway/grafana/railway.env.example`
+- `infra/railway/prometheus/railway.env.example`
