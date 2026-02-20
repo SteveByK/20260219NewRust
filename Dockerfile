@@ -1,10 +1,14 @@
 FROM rust:1.85-bookworm AS builder
 WORKDIR /app
 
-RUN cargo install cargo-leptos --locked
+ENV CARGO_BUILD_JOBS=2 \
+	CARGO_NET_RETRY=5 \
+	CARGO_HTTP_TIMEOUT=600
+
+RUN cargo install cargo-leptos --locked || cargo install cargo-leptos --locked
 COPY . .
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo leptos build --release
+RUN cargo leptos build --release || cargo leptos build --release
 
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
