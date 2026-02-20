@@ -49,3 +49,53 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e-social-flow.ps1
 - 聊天发送
 - 未读计数变化 + 标记已读
 - 邀请发送 + 待处理列表 + 接受邀请
+
+## CI 集成（已接入）
+
+`GitHub Actions` 已新增 `e2e-social-flow` 任务，流程为：
+
+1. 启动 `postgres / redis / nats / clickhouse`
+2. 后台启动 `platform-server`
+3. 执行 `scripts/e2e-social-flow.ps1`
+
+工作流文件：`.github/workflows/ci.yml`
+
+## Railway 报错原因与修复
+
+你图里的两个错误：
+
+- nats: `The executable '-js' could not be found.`
+- loki: `The executable '-config.file=/etc/loki/local-config.yaml' could not be found.`
+
+根因一致：Railway 当前把你填写的启动命令当成“可执行文件”本体来运行了。
+也就是你传了参数（`-js` / `-config.file=...`），但没有传主程序名，所以容器启动失败。
+
+### 修复方式（Railway 服务 Start Command）
+
+- NATS 服务：
+
+```text
+nats-server -js -m 8222
+```
+
+- Loki 服务：
+
+```text
+/usr/bin/loki -config.file=/etc/loki/local-config.yaml
+```
+
+### 额外建议
+
+- 这些监控组件（`loki/prometheus/grafana`）建议先不放 Railway 生产主环境，可放独立监控环境。
+- 如果仍报路径错误，先进入容器确认二进制路径：`which nats-server`、`which loki`。
+
+### 配置固化（避免 UI 手改丢失）
+
+已提供 Railway 模板目录，可直接在 Railway 设置对应 `Root Directory` 部署：
+
+- `infra/railway/nats`
+- `infra/railway/loki`
+- `infra/railway/prometheus`
+- `infra/railway/grafana`
+
+详细说明见：`infra/railway/README.md`

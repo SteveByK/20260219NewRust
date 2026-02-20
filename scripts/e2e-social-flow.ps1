@@ -1,6 +1,8 @@
 param(
   [string]$BaseUrl = "http://127.0.0.1:3000",
-  [string]$RoomId = "global"
+  [string]$RoomId = "global",
+  [int]$HealthRetry = 30,
+  [int]$HealthRetryDelaySeconds = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +21,11 @@ function Invoke-Api {
 
   $json = $Body | ConvertTo-Json -Depth 10
   return Invoke-RestMethod -Method $Method -Uri $uri -ContentType "application/json" -Body $json
+}
+
+function UrlEncode {
+  param([Parameter(Mandatory = $true)][string]$Value)
+  return [uri]::EscapeDataString($Value)
 }
 
 function Ensure-Auth {
@@ -56,7 +63,20 @@ function Require-Status {
 }
 
 Write-Host "[1/7] Health check..." -ForegroundColor Cyan
-$health = Invoke-Api -Method "GET" -Path "/health"
+for ($i = 1; $i -le $HealthRetry; $i++) {
+  try {
+    $health = Invoke-Api -Method "GET" -Path "/health"
+    if ($health.status -eq "ok") {
+      break
+    }
+  } catch {
+    if ($i -eq $HealthRetry) {
+      throw
+    }
+    Start-Sleep -Seconds $HealthRetryDelaySeconds
+  }
+}
+
 if ($health.status -ne "ok") {
   throw "Health check failed"
 }
@@ -77,12 +97,12 @@ Require-Status -Method "POST" -Path "/api/chat/send" -Body @{
 }
 
 Write-Host "[4/7] Read room state + mark read (Bob)..." -ForegroundColor Cyan
-$roomStateBefore = Invoke-Api -Method "GET" -Path "/api/chat/room-state?token=$([System.Web.HttpUtility]::UrlEncode($bob.token))&room_id=$([System.Web.HttpUtility]::UrlEncode($RoomId))"
+$roomStateBefore = Invoke-Api -Method "GET" -Path "/api/chat/room-state?token=$(UrlEncode -Value $bob.token)&room_id=$(UrlEncode -Value $RoomId)"
 Require-Status -Method "POST" -Path "/api/chat/mark-read" -Body @{
   token = $bob.token
   room_id = $RoomId
 }
-$roomStateAfter = Invoke-Api -Method "GET" -Path "/api/chat/room-state?token=$([System.Web.HttpUtility]::UrlEncode($bob.token))&room_id=$([System.Web.HttpUtility]::UrlEncode($RoomId))"
+$roomStateAfter = Invoke-Api -Method "GET" -Path "/api/chat/room-state?token=$(UrlEncode -Value $bob.token)&room_id=$(UrlEncode -Value $RoomId)"
 
 Write-Host "[5/7] Send invite (Alice -> Bob)..." -ForegroundColor Cyan
 Require-Status -Method "POST" -Path "/api/invite/send" -Body @{
@@ -92,7 +112,7 @@ Require-Status -Method "POST" -Path "/api/invite/send" -Body @{
 }
 
 Write-Host "[6/7] Load pending + accept invite (Bob)..." -ForegroundColor Cyan
-$pending = Invoke-Api -Method "GET" -Path "/api/invite/pending?token=$([System.Web.HttpUtility]::UrlEncode($bob.token))"
+$pending = Invoke-Api -Method "GET" -Path "/api/invite/pending?token=$(UrlEncode -Value $bob.token)"
 if ($null -eq $pending -or $pending.Count -eq 0) {
   throw "No pending invite found for Bob"
 }
@@ -105,7 +125,7 @@ Require-Status -Method "POST" -Path "/api/invite/respond" -Body @{
 }
 
 Write-Host "[7/7] Verify pending list cleaned..." -ForegroundColor Cyan
-$pendingAfter = Invoke-Api -Method "GET" -Path "/api/invite/pending?token=$([System.Web.HttpUtility]::UrlEncode($bob.token))"
+$pendingAfter = Invoke-Api -Method "GET" -Path "/api/invite/pending?token=$(UrlEncode -Value $bob.token)"
 
 $result = [PSCustomObject]@{
   health = $health.status

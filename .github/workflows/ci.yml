@@ -22,3 +22,38 @@ jobs:
         run: cargo build -p platform --no-default-features --features hydrate --target wasm32-unknown-unknown
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  e2e-social-flow:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Start infra services
+        run: docker compose up -d postgres redis nats clickhouse
+      - name: Run platform server (background)
+        run: |
+          DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5432/platform' \
+          REDIS_URL='redis://127.0.0.1:6380' \
+          NATS_URL='nats://127.0.0.1:4222' \
+          CLICKHOUSE_URL='http://127.0.0.1:8123' \
+          JWT_SECRET='dev-secret' \
+          cargo run -p platform --features ssr --bin platform-server > server.log 2>&1 &
+      - name: Run social e2e script
+        shell: pwsh
+        run: ./scripts/e2e-social-flow.ps1
+      - name: Print server logs on failure
+        if: failure()
+        run: |
+          echo '===== server.log ====='
+          cat server.log || true
+          echo '===== docker compose ps ====='
+          docker compose ps
+          echo '===== nats logs ====='
+          docker compose logs nats || true
+          echo '===== postgres logs ====='
+          docker compose logs postgres || true
+      - name: Stop infra services
+        if: always()
+        run: docker compose down -v
