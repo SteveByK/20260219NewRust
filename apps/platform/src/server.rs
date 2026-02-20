@@ -1000,7 +1000,11 @@ pub async fn run() -> anyhow::Result<()> {
         .layer(Extension(schema))
         .with_state(app_state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(3000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "platform server started");
 
     axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;

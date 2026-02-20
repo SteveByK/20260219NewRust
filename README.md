@@ -93,6 +93,7 @@ nats-server -js -m 8222
 
 已提供 Railway 模板目录，可直接在 Railway 设置对应 `Root Directory` 部署：
 
+- `infra/railway/platform`
 - `infra/railway/nats`
 - `infra/railway/loki`
 - `infra/railway/prometheus`

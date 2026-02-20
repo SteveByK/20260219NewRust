@@ -1,6 +1,21 @@
-# Railway service templates (NATS / Loki / Prometheus / Grafana)
+# Railway service templates (Platform / NATS / Loki / Prometheus / Grafana)
 
 These templates lock the startup behavior into Dockerfiles so Railway won't fail due to mis-typed Start Command values.
+
+## platform
+
+- Service root: `infra/railway/platform`
+- Runtime image: distroless with compiled `platform-server`
+- Health check: `/health`
+- Port binding: uses Railway `PORT` env automatically
+
+Required environment variables:
+
+- `DATABASE_URL`
+- `REDIS_URL`
+- `NATS_URL`
+- `CLICKHOUSE_URL`
+- `JWT_SECRET` (or `JWT_PRIVATE_KEY_PEM` + `JWT_PUBLIC_KEY_PEM`)
 
 ## nats
 
@@ -30,6 +45,7 @@ These templates lock the startup behavior into Dockerfiles so Railway won't fail
 
 1. Create a service from this repo.
 2. Set **Root Directory** to one of:
+   - `infra/railway/platform`
    - `infra/railway/nats`
    - `infra/railway/loki`
    - `infra/railway/prometheus`
