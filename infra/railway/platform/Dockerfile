@@ -1,6 +1,6 @@
 ## syntax=docker/dockerfile:1.7
 
-FROM rust:1.90-bookworm AS toolchain
+FROM rust:1.91-bookworm AS toolchain
 WORKDIR /app
 
 ENV CARGO_BUILD_JOBS=2 \
@@ -27,7 +27,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM toolchain AS cacher
 COPY --from=planner /app/recipe.json /app/recipe.json
-RUN cargo chef cook --release --workspace --recipe-path recipe.json
+RUN cargo chef cook --release --workspace --recipe-path recipe.json --locked
 
 FROM toolchain AS builder
 COPY --from=cacher /app/target /app/target
