@@ -125,4 +125,3 @@ lib-default-features = false
 bin-default-features = false
 style-file = "style/tailwind.css"
 tailwind-input-file = "style/tailwind.css"
-tailwind-config-file = "tailwind.config.js"

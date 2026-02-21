@@ -1,13 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@source "../src/**/*.rs";
+@source "../public/**/*.html";
 
 html, body {
-  @apply h-full w-full bg-slate-950 text-slate-100;
+  height: 100%;
+  width: 100%;
+  background-color: var(--color-slate-950);
+  color: var(--color-slate-100);
 }
 
 #map {
-  @apply bg-slate-950;
+  background-color: var(--color-slate-950);
 }
 
 .maplibregl-ctrl-bottom-right,
