@@ -30,8 +30,8 @@ ENV CARGO_BUILD_JOBS=2 \
 	CARGO_PROFILE_RELEASE_LTO=thin \
 	CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+	--mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
 	set -eux; \
 	for i in 1 2 3 4 5; do \
 		cargo install cargo-leptos --locked --version ${CARGO_LEPTOS_VERSION} && break; \
@@ -47,13 +47,13 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY apps/platform/Cargo.toml apps/platform/Cargo.toml
 COPY crates/shared/Cargo.toml crates/shared/Cargo.toml
 COPY crates/game-wasm/Cargo.toml crates/game-wasm/Cargo.toml
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+	--mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
 	cargo fetch --locked
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
-	--mount=type=cache,target=/app/target \
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+	--mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+	--mount=type=cache,id=platform-target,target=/app/target \
 	set -eux; \
 	for i in 1 2 3 4 5; do \
 		cargo leptos build --release && break; \
