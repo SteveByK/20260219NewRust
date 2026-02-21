@@ -59,6 +59,7 @@ Open service `platform` -> **Variables**:
 - `CLICKHOUSE_URL=http://clickhouse:8123`
 - `JWT_SECRET=<strong-secret>`
 - optional: `RUST_LOG=info`
+- optional: `AWS_EC2_METADATA_DISABLED=true`
 
 ### 2.3 grafana (optional)
 
@@ -126,6 +127,14 @@ Expected result: HTTP 200 and healthy status.
 - platform build log shows `cargo build --release` + `failed to find a workspace root`
   - Service: platform
   - Fix: set Root Directory to `.`, ensure Dockerfile builder is used, clear Start Command, redeploy.
+
+- platform build log shows `couldn't read ... infra/sql/init.sql` (os error 2)
+  - Service: platform
+  - Fix: ensure repository `.dockerignore` does not exclude `infra/sql/init.sql` (must contain allow-list exceptions for that file), then redeploy.
+
+- platform build log shows `Could not read "target/release/platform"`
+  - Service: platform
+  - Fix: ensure `apps/platform/Cargo.toml` has `[package.metadata.leptos]` with `output-name = "platform"` and `bin-target = "platform"`, and has a `[[bin]] name = "platform"` target.
 
 - platform cannot connect to postgres/redis/nats/clickhouse
   - Fix: verify service names + platform env URLs, then redeploy dependencies first.

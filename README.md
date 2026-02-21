@@ -112,3 +112,34 @@ nats-server -js -m 8222
 - `infra/railway/clickhouse/railway.env.example`
 - `infra/railway/grafana/railway.env.example`
 - `infra/railway/prometheus/railway.env.example`
+
+## Railway 一键核对清单（复制即用）
+
+> 按顺序执行，避免 90% 部署失败。
+
+1. 服务命名统一：`platform / postgres / redis / clickhouse / nats / loki / prometheus / grafana`
+2. Root Directory 正确：
+	- `platform` 用 `.`
+	- 其他服务用 `infra/railway/<service>`
+3. 所有服务清空 Start Command（使用 Dockerfile 默认 CMD）
+4. platform 变量完整：
+	- `DATABASE_URL=postgres://postgres:<POSTGRES_PASSWORD>@postgres:5432/platform`
+	- `REDIS_URL=redis://redis:6379`
+	- `NATS_URL=nats://nats:4222`
+	- `CLICKHOUSE_URL=http://clickhouse:8123`
+	- `JWT_SECRET=<strong-secret>`
+	- 可选：`RUST_LOG=info`
+	- 可选：`AWS_EC2_METADATA_DISABLED=true`
+5. 部署顺序：
+	- `postgres -> redis -> clickhouse -> nats -> platform -> loki -> prometheus -> grafana`
+6. 健康检查：
+	- platform: `/health`
+	- prometheus: `/-/healthy`
+	- grafana: `/api/health`
+7. 若 platform Build Logs 出现 `couldn't read ... infra/sql/init.sql`：检查仓库 `.dockerignore` 必须放行 `infra/sql/init.sql`
+8. 若 platform Build Logs 出现 `Could not read "target/release/platform"`：检查 `apps/platform/Cargo.toml` 的 `[package.metadata.leptos]` 中 `output-name`/`bin-target` 与 `[[bin]] name = "platform"` 一致
+
+完整排障说明：
+
+- `infra/railway/RUNBOOK.md`
+- `infra/railway/RUNBOOK_UI.md`
