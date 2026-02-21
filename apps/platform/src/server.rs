@@ -590,9 +590,11 @@ async fn health() -> impl IntoResponse {
 async fn register(State(app): State<Arc<state::AppState>>, Json(body): Json<RegisterBody>) -> impl IntoResponse {
     let hashed = services::auth::hash_password(&body.password).unwrap_or_default();
     let username = body.username;
+    let user_id = Uuid::new_v4();
     let row = sqlx::query(
-        "INSERT INTO users(username, password_hash) VALUES($1, $2) ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash RETURNING id::text, username"
+        "INSERT INTO users(id, username, password_hash) VALUES($1, $2, $3) ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash RETURNING id::text, username"
     )
+    .bind(user_id)
     .bind(&username)
     .bind(hashed)
     .fetch_one(&app.pg)

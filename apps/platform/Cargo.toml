@@ -7,6 +7,10 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
+name = "platform"
+path = "src/main_platform.rs"
+
+[[bin]]
 name = "platform-server"
 path = "src/main.rs"
 
@@ -113,6 +117,7 @@ urlencoding = "2"
 
 [package.metadata.leptos]
 output-name = "platform"
+bin-target = "platform"
 site-root = "target/site"
 site-pkg-dir = "pkg"
 assets-dir = "public"
