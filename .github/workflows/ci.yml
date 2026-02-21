@@ -75,6 +75,9 @@ jobs:
   preflight-remote:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    concurrency:
+      group: preflight-${{ github.workflow }}-${{ github.ref_name }}-${{ inputs.preflight_base_url }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - name: Run deploy preflight against remote base URL
@@ -85,7 +88,23 @@ jobs:
             throw "preflight_base_url is required"
           }
 
+          $uri = $null
+          if (-not [System.Uri]::TryCreate($baseUrl, [System.UriKind]::Absolute, [ref]$uri)) {
+            throw "preflight_base_url must be a valid absolute URL"
+          }
+
+          if ($uri.Scheme -ne "https") {
+            throw "preflight_base_url must start with https://"
+          }
+
+          $blockedHosts = @("localhost", "127.0.0.1", "::1")
+          if ($blockedHosts -contains $uri.Host.ToLowerInvariant()) {
+            throw "preflight_base_url must be a remote deployment URL, not localhost"
+          }
+
+          $normalizedBase = $uri.GetLeftPart([System.UriPartial]::Authority)
+
           ./scripts/deploy-preflight.ps1 `
-            -BaseUrl $baseUrl `
+            -BaseUrl $normalizedBase `
             -SkipEnvCheck `
             -SkipTcpCheck

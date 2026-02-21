@@ -165,3 +165,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoo
 ```
 
 可选：在 GitHub Actions 手动触发 `ci` 工作流并填写 `preflight_base_url`，会运行 `preflight-remote` 作业对目标环境执行 `/health`、`/ready`、`/` 预检。
+该输入要求为远程 `https://` 地址，且不允许 `localhost/127.0.0.1/::1`。
