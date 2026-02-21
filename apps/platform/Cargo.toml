@@ -78,7 +78,7 @@ gloo-net = "0.6"
 axum = { version = "0.8", features = ["ws", "macros"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"], optional = true }
 tower = { version = "0.5", optional = true }
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-full"], optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-full", "fs"], optional = true }
 
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"], optional = true }
 redis = { version = "0.28", features = ["tokio-comp", "aio", "connection-manager", "geospatial"], optional = true }

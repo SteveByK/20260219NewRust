@@ -34,9 +34,20 @@ function Ensure-Auth {
     [string]$Password
   )
 
-  $login = Invoke-Api -Method "POST" -Path "/api/login" -Body @{ username = $Username; password = $Password }
-  if ($null -ne $login -and -not [string]::IsNullOrWhiteSpace($login.token)) {
-    return $login
+  try {
+    $login = Invoke-Api -Method "POST" -Path "/api/login" -Body @{ username = $Username; password = $Password }
+    if ($null -ne $login -and -not [string]::IsNullOrWhiteSpace($login.token)) {
+      return $login
+    }
+  } catch {
+    $statusCode = 0
+    if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+      $statusCode = [int]$_.Exception.Response.StatusCode
+    }
+
+    if ($statusCode -ne 404) {
+      throw
+    }
   }
 
   $register = Invoke-Api -Method "POST" -Path "/api/register" -Body @{ username = $Username; password = $Password }

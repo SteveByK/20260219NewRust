@@ -32,6 +32,43 @@ struct AuthResult {
 
 #[cfg(feature = "hydrate")]
 #[derive(Debug, Clone, Deserialize)]
+struct ApiErrorBody {
+    error: String,
+}
+
+#[cfg(feature = "hydrate")]
+async fn request_auth(endpoint: &str, payload: &AuthBody, action: &str) -> Result<AuthResult, (u16, String)> {
+    let body = serde_json::to_string(payload)
+        .map_err(|_| (500, format!("{}请求序列化失败", action)))?;
+
+    let req = gloo_net::http::Request::post(endpoint)
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|_| (500, format!("{}请求构建失败", action)))?;
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|_| (500, format!("{}请求失败", action)))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    if (200..300).contains(&status) {
+        let parsed = serde_json::from_str::<AuthResult>(&text)
+            .map_err(|_| (500, format!("{}返回解析失败", action)))?;
+        return Ok(parsed);
+    }
+
+    let msg = serde_json::from_str::<ApiErrorBody>(&text)
+        .map(|v| v.error)
+        .unwrap_or_else(|_| format!("{}失败（HTTP {}）", action, status));
+
+    Err((status, msg))
+}
+
+#[cfg(feature = "hydrate")]
+#[derive(Debug, Clone, Deserialize)]
 struct ChatHistoryItem {
     room_id: String,
     from_user: String,
@@ -397,47 +434,21 @@ pub fn HomePage() -> impl IntoView {
                     username: username_value,
                     password: password_value,
                 };
-                let Ok(body) = serde_json::to_string(&payload) else {
-                    status_setter.set("登录请求序列化失败".to_string());
-                    return;
-                };
-
-                let request = gloo_net::http::Request::post("/api/login")
-                    .header("content-type", "application/json")
-                    .body(body.clone());
-
-                let auth = match request {
-                    Ok(req) => match req.send().await {
-                        Ok(resp) => resp.json::<AuthResult>().await.ok(),
-                        Err(_) => None,
-                    },
-                    Err(_) => None,
-                };
-
-                let final_auth = if let Some(a) = auth.filter(|a| !a.token.is_empty()) {
-                    a
-                } else {
-                    let reg_req = gloo_net::http::Request::post("/api/register")
-                        .header("content-type", "application/json")
-                        .body(body);
-                    match reg_req {
-                        Ok(req) => match req.send().await {
-                            Ok(resp) => match resp.json::<AuthResult>().await {
-                                Ok(a) => a,
-                                Err(_) => {
-                                    status_setter.set("注册返回解析失败".to_string());
-                                    return;
-                                }
-                            },
-                            Err(_) => {
-                                status_setter.set("注册失败".to_string());
+                let final_auth = match request_auth("/api/login", &payload, "登录").await {
+                    Ok(auth) => auth,
+                    Err((404, _)) => {
+                        status_setter.set("用户不存在，自动注册中...".to_string());
+                        match request_auth("/api/register", &payload, "注册").await {
+                            Ok(auth) => auth,
+                            Err((_, msg)) => {
+                                status_setter.set(format!("注册失败：{}", msg));
                                 return;
                             }
-                        },
-                        Err(_) => {
-                            status_setter.set("注册请求构建失败".to_string());
-                            return;
                         }
+                    }
+                    Err((_, msg)) => {
+                        status_setter.set(format!("登录失败：{}", msg));
+                        return;
                     }
                 };
 

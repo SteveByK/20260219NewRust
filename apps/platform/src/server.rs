@@ -1,6 +1,7 @@
 #![cfg(feature = "ssr")]
 
 use std::{net::SocketAddr, sync::Arc};
+use std::path::Path;
 
 use argon2::{
     password_hash::{PasswordHash, PasswordVerifier, SaltString},
@@ -20,6 +21,7 @@ use axum::{
     Json, Router,
 };
 use axum::http::StatusCode;
+use axum::response::Response;
 use axum_prometheus::PrometheusMetricLayer;
 use deadpool_redis::{Config as RedisPoolConfig, Pool as RedisPool, Runtime};
 use futures_util::StreamExt;
@@ -30,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -572,6 +575,11 @@ struct RegisterResult {
     username: String,
 }
 
+#[derive(Serialize)]
+struct ApiError {
+    error: String,
+}
+
 struct QueryRoot;
 
 #[Object]
@@ -587,70 +595,166 @@ async fn health() -> impl IntoResponse {
     Json(serde_json::json!({"status": "ok"}))
 }
 
-async fn register(State(app): State<Arc<state::AppState>>, Json(body): Json<RegisterBody>) -> impl IntoResponse {
-    let hashed = services::auth::hash_password(&body.password).unwrap_or_default();
+async fn register(State(app): State<Arc<state::AppState>>, Json(body): Json<RegisterBody>) -> Response {
+    if body.username.trim().is_empty() || body.password.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "username and password are required".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    let hashed = match services::auth::hash_password(&body.password) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!(?err, "password hash failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to process credentials".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
     let username = body.username;
     let user_id = Uuid::new_v4();
     let row = sqlx::query(
-        "INSERT INTO users(id, username, password_hash) VALUES($1, $2, $3) ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash RETURNING id::text, username"
+        "INSERT INTO users(id, username, password_hash) VALUES($1, $2, $3) ON CONFLICT (username) DO NOTHING RETURNING id::text, username"
     )
     .bind(user_id)
     .bind(&username)
     .bind(hashed)
-    .fetch_one(&app.pg)
+    .fetch_optional(&app.pg)
     .await;
 
-    let Ok(row) = row else {
-        return Json(RegisterResult {
-            token: String::new(),
-            user_id: String::new(),
-            username,
-        });
+    let row = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiError {
+                    error: "username already exists".to_string(),
+                }),
+            )
+                .into_response();
+        }
+        Err(err) => {
+            tracing::error!(?err, "register query failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to create account".to_string(),
+                }),
+            )
+                .into_response();
+        }
     };
 
     let user_id_str = row.get::<String, _>("id");
     let user_id = Uuid::parse_str(&user_id_str).unwrap_or_else(|_| Uuid::nil());
-    let token = services::auth::make_jwt(user_id, &app.jwt).unwrap_or_default();
+    let token = match services::auth::make_jwt(user_id, &app.jwt) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!(?err, "jwt generation failed on register");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to issue token".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
 
-    Json(RegisterResult {
-        token,
-        user_id: user_id.to_string(),
-        username: row.get::<String, _>("username"),
-    })
+    (
+        StatusCode::CREATED,
+        Json(RegisterResult {
+            token,
+            user_id: user_id.to_string(),
+            username: row.get::<String, _>("username"),
+        }),
+    )
+        .into_response()
 }
 
-async fn login(State(app): State<Arc<state::AppState>>, Json(body): Json<LoginBody>) -> impl IntoResponse {
+async fn login(State(app): State<Arc<state::AppState>>, Json(body): Json<LoginBody>) -> Response {
+    if body.username.trim().is_empty() || body.password.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "username and password are required".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
     let row = sqlx::query("SELECT id::text, username, password_hash FROM users WHERE username = $1")
         .bind(&body.username)
         .fetch_optional(&app.pg)
         .await;
 
-    let Ok(Some(row)) = row else {
-        return Json(RegisterResult {
-            token: String::new(),
-            user_id: String::new(),
-            username: body.username,
-        });
+    let row = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "user not found".to_string(),
+                }),
+            )
+                .into_response();
+        }
+        Err(err) => {
+            tracing::error!(?err, "login query failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to load account".to_string(),
+                }),
+            )
+                .into_response();
+        }
     };
 
     let hash = row.get::<String, _>("password_hash");
     let valid = services::auth::verify_password(&body.password, &hash);
     if !valid {
-        return Json(RegisterResult {
-            token: String::new(),
-            user_id: String::new(),
-            username: row.get::<String, _>("username"),
-        });
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError {
+                error: "invalid credentials".to_string(),
+            }),
+        )
+            .into_response();
     }
 
     let user_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap_or_else(|_| Uuid::nil());
-    let token = services::auth::make_jwt(user_id, &app.jwt).unwrap_or_default();
+    let token = match services::auth::make_jwt(user_id, &app.jwt) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!(?err, "jwt generation failed on login");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to issue token".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
 
-    Json(RegisterResult {
-        token,
-        user_id: user_id.to_string(),
-        username: row.get::<String, _>("username"),
-    })
+    (
+        StatusCode::OK,
+        Json(RegisterResult {
+            token,
+            user_id: user_id.to_string(),
+            username: row.get::<String, _>("username"),
+        }),
+    )
+        .into_response()
 }
 
 async fn ingest_position_http(
@@ -1005,6 +1109,16 @@ pub async fn run() -> anyhow::Result<()> {
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
+    let site_root = if let Ok(configured) = std::env::var("LEPTOS_SITE_ROOT") {
+        configured
+    } else if Path::new("site/index.html").exists() {
+        "site".to_string()
+    } else {
+        "target/site".to_string()
+    };
+    let site_service = ServeDir::new(&site_root)
+        .not_found_service(ServeFile::new(format!("{site_root}/index.html")));
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/register", post(register))
@@ -1020,6 +1134,7 @@ pub async fn run() -> anyhow::Result<()> {
         .route("/graphql", post(graphql_handler))
         .route("/ws", get(ws_handler))
         .route("/metrics", get(|| async move { metric_handle.render() }))
+        .fallback_service(site_service)
         .layer(prometheus_layer)
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
