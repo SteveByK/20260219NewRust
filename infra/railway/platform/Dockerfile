@@ -41,12 +41,8 @@ RUN set -eux; \
 RUN rustup target add wasm32-unknown-unknown
 
 FROM toolchain AS builder
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY apps/platform/Cargo.toml apps/platform/Cargo.toml
-COPY crates/shared/Cargo.toml crates/shared/Cargo.toml
-COPY crates/game-wasm/Cargo.toml crates/game-wasm/Cargo.toml
-RUN cargo fetch --locked
 COPY . .
+RUN rm -f rust-toolchain.toml
 RUN set -eux; \
 	for i in 1 2 3 4 5; do \
 		cargo leptos build --release && break; \
