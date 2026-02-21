@@ -504,6 +504,7 @@ struct SendChatBody {
 #[derive(Deserialize)]
 struct ChatHistoryQuery {
     room_id: String,
+    limit: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -580,6 +581,14 @@ struct ApiError {
     error: String,
 }
 
+#[derive(Serialize)]
+struct PublicMapConfig {
+    style_url: String,
+    center_lon: f64,
+    center_lat: f64,
+    zoom: f64,
+}
+
 struct QueryRoot;
 
 #[Object]
@@ -593,6 +602,30 @@ type AppSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({"status": "ok"}))
+}
+
+async fn public_map_config() -> impl IntoResponse {
+    let style_url = std::env::var("MAP_STYLE_URL")
+        .unwrap_or_else(|_| "https://demotiles.maplibre.org/style.json".to_string());
+    let center_lon = std::env::var("MAP_CENTER_LON")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(116.397);
+    let center_lat = std::env::var("MAP_CENTER_LAT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(39.908);
+    let zoom = std::env::var("MAP_DEFAULT_ZOOM")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(11.0);
+
+    Json(PublicMapConfig {
+        style_url,
+        center_lon,
+        center_lat,
+        zoom,
+    })
 }
 
 async fn register(State(app): State<Arc<state::AppState>>, Json(body): Json<RegisterBody>) -> Response {
@@ -818,7 +851,9 @@ async fn chat_history(
         query.room_id
     };
 
-    match services::chat::history(&app.pg, &room_id, 100).await {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+
+    match services::chat::history(&app.pg, &room_id, limit).await {
         Ok(rows) => Json(rows).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -1121,6 +1156,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/api/public-map-config", get(public_map_config))
         .route("/api/register", post(register))
         .route("/api/login", post(login))
         .route("/api/position", post(ingest_position_http))

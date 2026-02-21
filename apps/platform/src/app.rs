@@ -107,6 +107,64 @@ struct Session {
 }
 
 #[cfg(feature = "hydrate")]
+#[derive(Debug, Clone, Deserialize)]
+struct PublicMapConfig {
+    style_url: String,
+    center_lon: f64,
+    center_lat: f64,
+    zoom: f64,
+}
+
+const CHAT_HISTORY_PAGE_SIZE: i64 = 20;
+
+#[cfg(feature = "hydrate")]
+async fn load_pending_invites(token: &str) -> Result<Vec<InviteItem>, String> {
+    let pending_url = format!("/api/invite/pending?token={}", urlencoding::encode(token));
+    let resp = gloo_net::http::Request::get(&pending_url)
+        .send()
+        .await
+        .map_err(|_| "加载待处理邀请失败".to_string())?;
+
+    resp.json::<Vec<InviteItem>>()
+        .await
+        .map_err(|_| "解析待处理邀请失败".to_string())
+}
+
+#[cfg(feature = "hydrate")]
+async fn load_history_page(room_id: &str, page: i64) -> Result<Vec<String>, String> {
+    let page = page.max(1);
+    let limit = (page * CHAT_HISTORY_PAGE_SIZE).clamp(CHAT_HISTORY_PAGE_SIZE, 500);
+    let url = format!(
+        "/api/chat/history?room_id={}&limit={}",
+        urlencoding::encode(room_id),
+        limit
+    );
+
+    let resp = gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|_| "历史消息加载失败".to_string())?;
+
+    let rows = resp
+        .json::<Vec<ChatHistoryItem>>()
+        .await
+        .map_err(|_| "历史消息解析失败".to_string())?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            format!(
+                "[{}][{}] {}: {}",
+                r.room_id,
+                r.ts.format("%H:%M:%S"),
+                r.from_user.chars().take(8).collect::<String>(),
+                r.text
+            )
+        })
+        .collect())
+}
+
+#[cfg(feature = "hydrate")]
 fn ws_url(token: &str) -> Option<String> {
     let window = web_sys::window()?;
     let location = window.location();
@@ -343,11 +401,32 @@ pub fn HomePage() -> impl IntoView {
     let chat_messages = RwSignal::new(Vec::<String>::new());
     let invite_events = RwSignal::new(Vec::<String>::new());
     let pending_invites = RwSignal::new(Vec::<InviteItem>::new());
+    let history_page = RwSignal::new(1_i64);
+    #[cfg(feature = "hydrate")]
+    let invite_poll_started = RwSignal::new(false);
 
     #[cfg(feature = "hydrate")]
     Effect::new(|_| {
-        crate::map::mount_map();
-        crate::map::set_center(116.397, 39.908);
+        leptos::task::spawn_local(async move {
+            let config = match gloo_net::http::Request::get("/api/public-map-config").send().await {
+                Ok(resp) => resp.json::<PublicMapConfig>().await.ok(),
+                Err(_) => None,
+            }
+            .unwrap_or(PublicMapConfig {
+                style_url: "https://demotiles.maplibre.org/style.json".to_string(),
+                center_lon: 116.397,
+                center_lat: 39.908,
+                zoom: 11.0,
+            });
+
+            crate::map::mount_map(
+                &config.style_url,
+                config.center_lon,
+                config.center_lat,
+                config.zoom,
+            );
+            crate::map::set_center(config.center_lon, config.center_lat);
+        });
     });
 
     let nearby = LocalResource::new(move || {
@@ -427,6 +506,7 @@ pub fn HomePage() -> impl IntoView {
             let chat_state = chat_messages;
             let invite_state = invite_events;
             let pending_state = pending_invites;
+            let poll_started = invite_poll_started;
 
             leptos::task::spawn_local(async move {
                 status_setter.set("登录中...".to_string());
@@ -467,11 +547,34 @@ pub fn HomePage() -> impl IntoView {
                     username: username.clone(),
                 }));
 
-                let pending_url = format!("/api/invite/pending?token={}", urlencoding::encode(&token));
-                if let Ok(resp) = gloo_net::http::Request::get(&pending_url).send().await {
-                    if let Ok(rows) = resp.json::<Vec<InviteItem>>().await {
-                        pending_state.set(rows);
+                if let Ok(rows) = load_pending_invites(&token).await {
+                    pending_state.set(rows);
+                }
+
+                if !poll_started.get_untracked() {
+                    poll_started.set(true);
+                    let token_for_poll = token.clone();
+                    let pending_for_poll = pending_state;
+                    let status_for_poll = status_setter;
+                    let poll = Closure::wrap(Box::new(move || {
+                        let token_value = token_for_poll.clone();
+                        let pending_value = pending_for_poll;
+                        let status_value = status_for_poll;
+                        leptos::task::spawn_local(async move {
+                            match load_pending_invites(&token_value).await {
+                                Ok(rows) => pending_value.set(rows),
+                                Err(err) => status_value.set(err),
+                            }
+                        });
+                    }) as Box<dyn FnMut()>);
+
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                            poll.as_ref().unchecked_ref(),
+                            12_000,
+                        );
                     }
+                    poll.forget();
                 }
 
                 status_setter.set(format!("已登录：{}", username));
@@ -539,28 +642,53 @@ pub fn HomePage() -> impl IntoView {
             let room = room_id.get();
             let chat_state = chat_messages;
             let status_setter = status;
+            let page = history_page.get();
             leptos::task::spawn_local(async move {
-                let url = format!("/api/chat/history?room_id={}", urlencoding::encode(&room));
-                match gloo_net::http::Request::get(&url).send().await {
-                    Ok(resp) => match resp.json::<Vec<ChatHistoryItem>>().await {
-                        Ok(rows) => {
-                            chat_state.set(
-                                rows.into_iter()
-                                    .map(|r| {
-                                        format!(
-                                            "[{}][{}] {}: {}",
-                                            r.room_id,
-                                            r.ts.format("%H:%M:%S"),
-                                            r.from_user.chars().take(8).collect::<String>(),
-                                            r.text
-                                        )
-                                    })
-                                    .collect(),
-                            );
-                        }
-                        Err(_) => status_setter.set("历史消息解析失败".to_string()),
-                    },
-                    Err(_) => status_setter.set("历史消息加载失败".to_string()),
+                match load_history_page(&room, page).await {
+                    Ok(rows) => chat_state.set(rows),
+                    Err(err) => status_setter.set(err),
+                }
+            });
+        }
+    };
+
+    let on_load_older_history = move |_| {
+        #[cfg(feature = "hydrate")]
+        {
+            let room = room_id.get();
+            let chat_state = chat_messages;
+            let status_setter = status;
+            let page_signal = history_page;
+            page_signal.update(|v| *v += 1);
+            let page = page_signal.get();
+
+            leptos::task::spawn_local(async move {
+                match load_history_page(&room, page).await {
+                    Ok(rows) => chat_state.set(rows),
+                    Err(err) => status_setter.set(err),
+                }
+            });
+        }
+    };
+
+    let on_load_newer_history = move |_| {
+        #[cfg(feature = "hydrate")]
+        {
+            let room = room_id.get();
+            let chat_state = chat_messages;
+            let status_setter = status;
+            let page_signal = history_page;
+            page_signal.update(|v| {
+                if *v > 1 {
+                    *v -= 1;
+                }
+            });
+            let page = page_signal.get();
+
+            leptos::task::spawn_local(async move {
+                match load_history_page(&room, page).await {
+                    Ok(rows) => chat_state.set(rows),
+                    Err(err) => status_setter.set(err),
                 }
             });
         }
@@ -758,8 +886,11 @@ pub fn HomePage() -> impl IntoView {
                         <div class="flex gap-2">
                             <input class="flex-1 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs" placeholder="房间ID（默认global）" prop:value=move || room_id.get() on:input=move |ev| room_id.set(event_target_value(&ev)) />
                             <button class="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs" on:click=on_load_history>"加载历史"</button>
+                            <button class="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs" on:click=on_load_older_history>"更早"</button>
+                            <button class="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs" on:click=on_load_newer_history>"较新"</button>
                             <button class="rounded bg-cyan-600 hover:bg-cyan-500 px-2 py-1 text-xs" on:click=on_mark_read>"标记已读"</button>
                         </div>
+                        <p class="text-[11px] text-slate-500">{move || format!("历史页: {} (每页{}条)", history_page.get(), CHAT_HISTORY_PAGE_SIZE)}</p>
                         <div class="max-h-24 overflow-auto rounded border border-slate-800 p-2 text-xs text-slate-300 space-y-1">
                             {move || {
                                 #[cfg(feature = "hydrate")]

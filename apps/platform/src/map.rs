@@ -5,8 +5,7 @@ use web_sys::window;
 let appMap = null;
 const SOURCE_ID = 'online-users';
 
-export function initMap(targetId) {
-  const styleUrl = 'https://demotiles.maplibre.org/style.json';
+export function initMap(targetId, styleUrl, centerLon, centerLat, zoom) {
   if (!window.maplibregl) {
     console.warn('MapLibre GL JS not loaded. Add it via CDN in production.');
     return null;
@@ -18,8 +17,8 @@ export function initMap(targetId) {
   const map = new window.maplibregl.Map({
     container: targetId,
     style: styleUrl,
-    center: [116.397, 39.908],
-    zoom: 11,
+    center: [centerLon, centerLat],
+    zoom,
     attributionControl: false
   });
 
@@ -89,16 +88,16 @@ export function setMapCenter(lon, lat) {
 }
 "#)]
 extern "C" {
-    fn initMap(target_id: &str) -> JsValue;
+  fn initMap(target_id: &str, style_url: &str, center_lon: f64, center_lat: f64, zoom: f64) -> JsValue;
     fn updateOnlineUsersGeoJson(feature_collection_json: &str);
     fn setMapCenter(lon: f64, lat: f64);
 }
 
-pub fn mount_map() {
+pub fn mount_map(style_url: &str, center_lon: f64, center_lat: f64, zoom: f64) {
     if window().is_none() {
         return;
     }
-    let _ = initMap("map");
+  let _ = initMap("map", style_url, center_lon, center_lat, zoom);
 }
 
 pub fn update_online_users_geojson(feature_collection_json: &str) {
