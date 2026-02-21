@@ -8,6 +8,7 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 
 ARG TAILWIND_VERSION=v4.1.10
+ARG CARGO_LEPTOS_VERSION=0.3.4
 
 RUN set -eux; \
 	arch="$(dpkg --print-architecture)"; \
@@ -17,7 +18,9 @@ RUN set -eux; \
 		*) echo "unsupported architecture: $arch"; exit 1 ;; \
 	esac; \
 	url="https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-${tw_arch}"; \
-	curl -fL --retry 5 --retry-delay 2 --retry-connrefused "$url" -o /usr/local/bin/tailwindcss; \
+	fallback_url="https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-${tw_arch}"; \
+	(curl -fL --retry 5 --retry-delay 2 --retry-all-errors "$url" -o /usr/local/bin/tailwindcss \
+		|| curl -fL --retry 5 --retry-delay 2 --retry-all-errors "$fallback_url" -o /usr/local/bin/tailwindcss); \
 	chmod +x /usr/local/bin/tailwindcss
 
 ENV CARGO_BUILD_JOBS=2 \
@@ -31,7 +34,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 	--mount=type=cache,target=/usr/local/cargo/git \
 	set -eux; \
 	for i in 1 2 3 4 5; do \
-		cargo install cargo-leptos --locked && break; \
+		cargo install cargo-leptos --locked --version ${CARGO_LEPTOS_VERSION} && break; \
 		echo "tool install failed (attempt ${i}), retrying..."; \
 		sleep $((i * 5)); \
 		if [ "$i" -eq 5 ]; then exit 1; fi; \
@@ -40,6 +43,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN rustup target add wasm32-unknown-unknown
 
 FROM toolchain AS builder
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY apps/platform/Cargo.toml apps/platform/Cargo.toml
+COPY crates/shared/Cargo.toml crates/shared/Cargo.toml
+COPY crates/game-wasm/Cargo.toml crates/game-wasm/Cargo.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git \
+	cargo fetch --locked
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
 	--mount=type=cache,target=/usr/local/cargo/git \
