@@ -3,6 +3,10 @@
 FROM rust:1.91-bookworm AS toolchain
 WORKDIR /app
 
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends pkg-config libasound2-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
 ENV CARGO_BUILD_JOBS=2 \
 	CARGO_NET_RETRY=5 \
 	CARGO_HTTP_TIMEOUT=600 \
@@ -27,7 +31,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM toolchain AS cacher
 COPY --from=planner /app/recipe.json /app/recipe.json
-RUN cargo chef cook --release --workspace --recipe-path recipe.json --locked
+RUN cargo chef cook --release --package platform --features ssr --recipe-path recipe.json --locked
 
 FROM toolchain AS builder
 COPY --from=cacher /app/target /app/target
