@@ -864,6 +864,8 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet href="/style/output.css" />
+        <Stylesheet href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+        <Script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></Script>
         <Title text="Social Map Platform" />
         <Router>
             <Routes fallback=|| "Not Found">
