@@ -11,9 +11,7 @@ ENV CARGO_BUILD_JOBS=2 \
 	CARGO_PROFILE_RELEASE_LTO=thin \
 	CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
-	set -eux; \
+RUN set -eux; \
 	for i in 1 2 3 4 5; do \
 		cargo install cargo-chef --locked && cargo install cargo-leptos --locked && break; \
 		echo "tool install failed (attempt ${i}), retrying..."; \
@@ -29,18 +27,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM toolchain AS cacher
 COPY --from=planner /app/recipe.json /app/recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
-	--mount=type=cache,target=/app/target \
-	cargo chef cook --release --workspace --recipe-path recipe.json
+RUN cargo chef cook --release --workspace --recipe-path recipe.json
 
 FROM toolchain AS builder
 COPY --from=cacher /app/target /app/target
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-	--mount=type=cache,target=/usr/local/cargo/git \
-	--mount=type=cache,target=/app/target \
-	set -eux; \
+RUN set -eux; \
 	for i in 1 2 3 4 5; do \
 		cargo leptos build --release && break; \
 		echo "cargo leptos build failed (attempt ${i}), retrying..."; \
