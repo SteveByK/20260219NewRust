@@ -132,3 +132,5 @@ Without volumes, restart/redeploy can lose data.
 
 - See `infra/railway/RUNBOOK.md` for dependency-aware triage, failure signatures, and a 10-minute recovery checklist.
 - See `infra/railway/RUNBOOK_UI.md` for step-by-step Railway dashboard click paths.
+- Use `scripts/deploy-preflight.ps1` for release preflight checks (`/health`, `/ready`, `/`, env vars, dependency TCP).
+- Use `scripts/deploy-rollback.ps1` for rollback preview/apply workflow with known-good commit.

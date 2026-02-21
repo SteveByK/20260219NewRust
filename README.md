@@ -143,3 +143,25 @@ nats-server -js -m 8222
 
 - `infra/railway/RUNBOOK.md`
 - `infra/railway/RUNBOOK_UI.md`
+
+## Day7（上线前预检 + 回滚预案）
+
+上线前建议执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-preflight.ps1 -BaseUrl https://<platform-url>
+```
+
+回滚预演（不改仓库）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit>
+```
+
+执行回滚（生成 revert commit）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit> -Apply
+```
+
+可选：在 GitHub Actions 手动触发 `ci` 工作流并填写 `preflight_base_url`，会运行 `preflight-remote` 作业对目标环境执行 `/health`、`/ready`、`/` 预检。

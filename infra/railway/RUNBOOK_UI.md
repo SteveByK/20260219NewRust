@@ -99,10 +99,13 @@ For each service, open **Deployments** and ensure latest deployment is Healthy.
 Quick endpoint checks (service URL + path):
 
 - platform: `/health`
+- platform readiness: `/ready`
 - prometheus: `/-/healthy`
 - grafana: `/api/health`
 
 Expected result: HTTP 200 and healthy status.
+
+Also verify homepage root (`/`) is reachable to avoid static-site regressions.
 
 ## 6) If deployment fails (where to click)
 
@@ -154,3 +157,23 @@ Expected result: HTTP 200 and healthy status.
 - `infra/railway/redis/railway.env.example`
 - `infra/railway/clickhouse/railway.env.example`
 - `infra/railway/grafana/railway.env.example`
+
+## 9) Day7 command helpers (local repo)
+
+From repo root, run preflight before release:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-preflight.ps1 -BaseUrl https://<platform-url>
+```
+
+Rollback helper (preview):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit>
+```
+
+Rollback helper (apply revert commit):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit> -Apply
+```

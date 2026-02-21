@@ -589,6 +589,13 @@ struct PublicMapConfig {
     zoom: f64,
 }
 
+#[derive(Serialize)]
+struct ReadinessResponse {
+    status: String,
+    postgres: bool,
+    redis: bool,
+}
+
 struct QueryRoot;
 
 #[Object]
@@ -602,6 +609,35 @@ type AppSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({"status": "ok"}))
+}
+
+async fn ready(State(app): State<Arc<state::AppState>>) -> impl IntoResponse {
+    let postgres_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&app.pg)
+        .await
+        .is_ok();
+
+    let redis_ok = if let Ok(mut conn) = app.redis.get().await {
+        redis::cmd("PING")
+            .query_async::<String>(&mut conn)
+            .await
+            .is_ok()
+    } else {
+        false
+    };
+
+    let all_ready = postgres_ok && redis_ok;
+    let payload = ReadinessResponse {
+        status: if all_ready { "ready" } else { "degraded" }.to_string(),
+        postgres: postgres_ok,
+        redis: redis_ok,
+    };
+
+    if all_ready {
+        (StatusCode::OK, Json(payload)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(payload)).into_response()
+    }
 }
 
 async fn public_map_config() -> impl IntoResponse {
@@ -1156,6 +1192,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/api/public-map-config", get(public_map_config))
         .route("/api/register", post(register))
         .route("/api/login", post(login))

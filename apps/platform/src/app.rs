@@ -115,6 +115,19 @@ struct PublicMapConfig {
     zoom: f64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ReadyResponse {
+    status: String,
+    postgres: bool,
+    redis: bool,
+}
+
+#[cfg(feature = "hydrate")]
+async fn fetch_ready_status() -> Option<ReadyResponse> {
+    let resp = gloo_net::http::Request::get("/ready").send().await.ok()?;
+    resp.json::<ReadyResponse>().await.ok()
+}
+
 const CHAT_HISTORY_PAGE_SIZE: i64 = 20;
 
 #[cfg(feature = "hydrate")]
@@ -402,6 +415,7 @@ pub fn HomePage() -> impl IntoView {
     let invite_events = RwSignal::new(Vec::<String>::new());
     let pending_invites = RwSignal::new(Vec::<InviteItem>::new());
     let history_page = RwSignal::new(1_i64);
+    let ready_state = RwSignal::new(None::<ReadyResponse>);
     #[cfg(feature = "hydrate")]
     let invite_poll_started = RwSignal::new(false);
 
@@ -427,6 +441,34 @@ pub fn HomePage() -> impl IntoView {
             );
             crate::map::set_center(config.center_lon, config.center_lat);
         });
+    });
+
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        let ready_signal = ready_state;
+
+        leptos::task::spawn_local(async move {
+            if let Some(ready) = fetch_ready_status().await {
+                ready_signal.set(Some(ready));
+            }
+        });
+
+        let poll = Closure::wrap(Box::new(move || {
+            let ready_signal = ready_signal;
+            leptos::task::spawn_local(async move {
+                if let Some(ready) = fetch_ready_status().await {
+                    ready_signal.set(Some(ready));
+                }
+            });
+        }) as Box<dyn FnMut()>);
+
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                poll.as_ref().unchecked_ref(),
+                10_000,
+            );
+        }
+        poll.forget();
     });
 
     let nearby = LocalResource::new(move || {
@@ -847,6 +889,27 @@ pub fn HomePage() -> impl IntoView {
                 <div class="text-sm flex items-center gap-4">
                     <span class="px-2 py-1 rounded border border-slate-700">{move || format!("在线: {}", online_count())}</span>
                     <span class="px-2 py-1 rounded border border-slate-700">{move || format!("未读: {}", unread_count())}</span>
+                    <span class=move || {
+                        match ready_state.get() {
+                            Some(ref state) if state.status == "ready" => {
+                                "px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"
+                            }
+                            Some(_) => "px-2 py-1 rounded bg-rose-500/20 text-rose-300",
+                            None => "px-2 py-1 rounded bg-slate-700/60 text-slate-300",
+                        }
+                    }>
+                        {move || {
+                            match ready_state.get() {
+                                Some(state) if state.status == "ready" => "后端已就绪".to_string(),
+                                Some(state) => format!(
+                                    "后端降级(PG:{} Redis:{})",
+                                    if state.postgres { "ok" } else { "x" },
+                                    if state.redis { "ok" } else { "x" }
+                                ),
+                                None => "后端检查中".to_string(),
+                            }
+                        }}
+                    </span>
                     <span class=move || {
                         if ws_connected.get() {
                             "px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"

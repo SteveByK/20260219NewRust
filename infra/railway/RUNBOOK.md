@@ -47,9 +47,52 @@
 8. Open grafana and verify both datasources are healthy.
 9. If startup logs show IMDS probe warnings in Railway, set `AWS_EC2_METADATA_DISABLED=true` for `platform`.
 
+## Day7: preflight + rollback automation
+
+### Deploy preflight (recommended before every release)
+
+Run from repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-preflight.ps1 -BaseUrl https://<platform-url>
+```
+
+What it validates:
+
+- required env vars (`DATABASE_URL`, `REDIS_URL`, `NATS_URL`, `CLICKHOUSE_URL`, `JWT_SECRET`)
+- TCP connectivity to postgres/redis/nats/clickhouse (from configured URLs)
+- HTTP checks for `/health`, `/ready`, and `/`
+
+Optional: validate against an env file instead of current process vars:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-preflight.ps1 -EnvFile .\infra\railway\platform\railway.env.example -BaseUrl https://<platform-url>
+```
+
+### Rollback helper (safe by default)
+
+Preview rollback impact (no changes made):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit>
+```
+
+Apply rollback (creates revert commit on rollback branch):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-rollback.ps1 -KnownGoodCommit <commit> -Apply
+```
+
+After rollback commit is created:
+
+1. Push rollback branch/commit.
+2. Redeploy `platform` in Railway.
+3. Re-run `deploy-preflight.ps1` and endpoint checks.
+
 ## Health endpoints
 
 - platform: `/health`
+- platform readiness: `/ready`
 - prometheus: `/-/healthy`
 - grafana: `/api/health`
 

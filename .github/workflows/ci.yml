@@ -4,6 +4,12 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      preflight_base_url:
+        description: "Target deployment base URL (e.g. https://your-platform.up.railway.app)"
+        required: true
+        type: string
 
 jobs:
   build:
@@ -43,6 +49,14 @@ jobs:
       - name: Run social e2e script
         shell: pwsh
         run: ./scripts/e2e-social-flow.ps1
+      - name: Smoke check endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:3000/health | tee /tmp/health.json
+          curl -fsS http://127.0.0.1:3000/ready | tee /tmp/ready.json
+          curl -fsS http://127.0.0.1:3000/ | head -c 200 > /tmp/root_snippet.txt
+          test -s /tmp/root_snippet.txt
       - name: Print server logs on failure
         if: failure()
         run: |
@@ -57,3 +71,21 @@ jobs:
       - name: Stop infra services
         if: always()
         run: docker compose down -v
+
+  preflight-remote:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deploy preflight against remote base URL
+        shell: pwsh
+        run: |
+          $baseUrl = "${{ inputs.preflight_base_url }}"
+          if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+            throw "preflight_base_url is required"
+          }
+
+          ./scripts/deploy-preflight.ps1 `
+            -BaseUrl $baseUrl `
+            -SkipEnvCheck `
+            -SkipTcpCheck
