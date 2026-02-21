@@ -17,7 +17,7 @@ ENV CARGO_BUILD_JOBS=2 \
 
 RUN set -eux; \
 	for i in 1 2 3 4 5; do \
-		cargo install cargo-chef --locked && cargo install cargo-leptos --locked && break; \
+		cargo install cargo-leptos --locked && break; \
 		echo "tool install failed (attempt ${i}), retrying..."; \
 		sleep $((i * 5)); \
 		if [ "$i" -eq 5 ]; then exit 1; fi; \
@@ -25,16 +25,7 @@ RUN set -eux; \
 
 RUN rustup target add wasm32-unknown-unknown
 
-FROM toolchain AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM toolchain AS cacher
-COPY --from=planner /app/recipe.json /app/recipe.json
-RUN cargo chef cook --release --package platform --features ssr --recipe-path recipe.json --locked
-
 FROM toolchain AS builder
-COPY --from=cacher /app/target /app/target
 COPY . .
 RUN set -eux; \
 	for i in 1 2 3 4 5; do \
