@@ -914,10 +914,35 @@ pub async fn run() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/platform".into());
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
-    let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-    let clickhouse_url = std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://127.0.0.1:8123".into());
+    let is_railway = std::env::var("RAILWAY_ENVIRONMENT").is_ok();
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        if is_railway {
+            "postgres://postgres:postgres@postgres:5432/platform".into()
+        } else {
+            "postgres://postgres:postgres@127.0.0.1:5432/platform".into()
+        }
+    });
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| {
+        if is_railway {
+            "redis://redis:6379".into()
+        } else {
+            "redis://127.0.0.1:6379".into()
+        }
+    });
+    let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| {
+        if is_railway {
+            "nats://nats:4222".into()
+        } else {
+            "nats://127.0.0.1:4222".into()
+        }
+    });
+    let clickhouse_url = std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| {
+        if is_railway {
+            "http://clickhouse:8123".into()
+        } else {
+            "http://127.0.0.1:8123".into()
+        }
+    });
 
     let pg = PgPool::connect(&database_url).await?;
     bootstrap_schema(&pg).await?;
