@@ -1,10 +1,52 @@
-FROM rust:1.85-bookworm AS builder
+## syntax=docker/dockerfile:1.7
+
+FROM rust:1.90-bookworm AS toolchain
 WORKDIR /app
 
-RUN cargo install cargo-leptos --locked
-COPY . .
+ENV CARGO_BUILD_JOBS=2 \
+	CARGO_NET_RETRY=5 \
+	CARGO_HTTP_TIMEOUT=600 \
+	LEPTOS_TAILWIND_VERSION=4.1.10 \
+	LEPTOS_WASM_OPT_VERSION=version_123 \
+	CARGO_PROFILE_RELEASE_LTO=thin \
+	CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git \
+	set -eux; \
+	for i in 1 2 3 4 5; do \
+		cargo install cargo-chef --locked && cargo install cargo-leptos --locked && break; \
+		echo "tool install failed (attempt ${i}), retrying..."; \
+		sleep $((i * 5)); \
+		if [ "$i" -eq 5 ]; then exit 1; fi; \
+	done
+
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo leptos build --release
+
+FROM toolchain AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM toolchain AS cacher
+COPY --from=planner /app/recipe.json /app/recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git \
+	--mount=type=cache,target=/app/target \
+	cargo chef cook --release --workspace --recipe-path recipe.json
+
+FROM toolchain AS builder
+COPY --from=cacher /app/target /app/target
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git \
+	--mount=type=cache,target=/app/target \
+	set -eux; \
+	for i in 1 2 3 4 5; do \
+		cargo leptos build --release && break; \
+		echo "cargo leptos build failed (attempt ${i}), retrying..."; \
+		sleep $((i * 10)); \
+		if [ "$i" -eq 5 ]; then exit 1; fi; \
+	done
 
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
