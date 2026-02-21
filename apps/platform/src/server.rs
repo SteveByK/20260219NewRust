@@ -895,7 +895,7 @@ async fn graphql_handler(
 }
 
 async fn bootstrap_schema(pg: &PgPool) -> anyhow::Result<()> {
-    let ddl = include_str!("../../../infra/sql/init.sql");
+    let ddl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../infra/sql/init.sql"));
     for statement in ddl.split(';') {
         let sql = statement.trim();
         if sql.is_empty() {

@@ -4,6 +4,8 @@ target/
 .vscode/
 node_modules/
 **/*.log
-infra/
+infra/**
+!infra/sql/
+!infra/sql/init.sql
 workers/
 **/.DS_Store
