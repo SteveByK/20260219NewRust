@@ -1,0 +1,49 @@
+﻿{
+    "status":  "fail",
+    "baseUrl":  "https://platform-production-011b.up.railway.app",
+    "executedAtUtc":  "2026-02-22T10:09:11.5682372Z",
+    "timeoutSeconds":  8,
+    "checks":  [
+                   {
+                       "url":  "https://platform-production-011b.up.railway.app/health",
+                       "status":  200,
+                       "ok":  true,
+                       "expected":  [
+                                        200
+                                    ],
+                       "bodySample":  "{\"status\":\"ok\"}",
+                       "error":  ""
+                   },
+                   {
+                       "url":  "https://platform-production-011b.up.railway.app/ready",
+                       "status":  200,
+                       "ok":  true,
+                       "expected":  [
+                                        200
+                                    ],
+                       "bodySample":  "{\"status\":\"ready\",\"postgres\":true,\"redis\":true}",
+                       "error":  ""
+                   },
+                   {
+                       "url":  "https://platform-production-011b.up.railway.app/api/public-map-config",
+                       "status":  200,
+                       "ok":  true,
+                       "expected":  [
+                                        200
+                                    ],
+                       "bodySample":  "{\"style_url\":\"https://demotiles.maplibre.org/style.json\",\"center_lon\":116.397,\"center_lat\":39.908,\"zoom\":11.0}",
+                       "error":  ""
+                   },
+                   {
+                       "url":  "https://platform-production-011b.up.railway.app/",
+                       "status":  404,
+                       "ok":  false,
+                       "expected":  [
+                                        200
+                                    ],
+                       "bodySample":  "",
+                       "error":  "The remote server returned an error: (404) Not Found."
+                   }
+               ],
+    "failedCount":  1
+}

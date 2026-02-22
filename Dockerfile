@@ -54,6 +54,6 @@ RUN set -eux; \
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
 COPY --from=builder /app/target/release/platform /app/platform-server
-COPY --from=builder /app/target/site /app/site
+COPY --from=builder /app/apps/platform/target/site /app/site
 EXPOSE 3000
 CMD ["/app/platform-server"]
