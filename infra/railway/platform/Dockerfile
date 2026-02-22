@@ -67,10 +67,9 @@ RUN set -eux; \
 	elif [ -f /app/target/site/index.html ]; then \
 		cp -a /app/target/site /app/site; \
 	else \
-		echo "site index not found in expected paths; generating fallback index"; \
+		echo "site index not found in expected paths; failing build"; \
 		find /app -maxdepth 6 -name index.html -print || true; \
-		mkdir -p /app/site; \
-		printf '%s\n' '<!doctype html>' '<html lang="en">' '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Platform</title></head>' '<body><h1>Platform is running</h1><p>Static assets were not generated in this build.</p></body>' '</html>' > /app/site/index.html; \
+		exit 1; \
 	fi
 
 FROM gcr.io/distroless/cc-debian12

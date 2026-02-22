@@ -124,11 +124,15 @@ function Invoke-EndpointStatus {
 
   try {
     $resp = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method GET -TimeoutSec $TimeoutSeconds
+    $body = ($resp.Content | Out-String).Trim()
+    $bodySample = $body.Substring(0, [Math]::Min(120, $body.Length))
+    $isStaticFallback = ($body -like "*Platform is running*" -and $body -like "*Static assets were not generated in this build.*")
     return [PSCustomObject]@{
       url = $Url
       status = [int]$resp.StatusCode
       ok = ([int]$resp.StatusCode -ge 200 -and [int]$resp.StatusCode -lt 300)
-      bodySample = ($resp.Content | Out-String).Trim().Substring(0, [Math]::Min(120, (($resp.Content | Out-String).Trim().Length)))
+      bodySample = $bodySample
+      isStaticFallback = $isStaticFallback
     }
   } catch {
     $status = 0
@@ -150,6 +154,7 @@ function Invoke-EndpointStatus {
       status = $status
       ok = $false
       bodySample = (($body | Out-String).Trim().Substring(0, [Math]::Min(120, (($body | Out-String).Trim().Length))) )
+      isStaticFallback = $false
       error = $_.Exception.Message
     }
   }
@@ -231,6 +236,11 @@ if (-not $SkipEndpointCheck) {
   $endpointFailed = @($endpointChecks | Where-Object { -not $_.ok })
   if ($endpointFailed.Count -gt 0) {
     $errors += "Endpoint checks failed: $($endpointFailed.url -join ', ')"
+  }
+
+  $fallbackPages = @($endpointChecks | Where-Object { $_.isStaticFallback })
+  if ($fallbackPages.Count -gt 0) {
+    $errors += "Endpoint checks failed: static fallback page detected on $($fallbackPages.url -join ', ')"
   }
 }
 
