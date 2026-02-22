@@ -45,6 +45,7 @@ COPY . .
 RUN rm -f rust-toolchain.toml
 RUN set -eux; \
 	for i in 1 2 3 4 5; do \
+		cd /app/apps/platform; \
 		cargo leptos build --release && break; \
 		echo "cargo leptos build failed (attempt ${i}), retrying..."; \
 		sleep $((i * 10)); \
