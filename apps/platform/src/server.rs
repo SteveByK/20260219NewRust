@@ -16,7 +16,7 @@ use axum::{
         Query, State,
     },
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, get_service, post},
     Extension,
     Json, Router,
 };
@@ -1182,17 +1182,24 @@ pub async fn run() -> anyhow::Result<()> {
 
     let site_root = if let Ok(configured) = std::env::var("LEPTOS_SITE_ROOT") {
         configured
-    } else if Path::new("site/index.html").exists() {
-        "site".to_string()
     } else {
-        "target/site".to_string()
+        let candidates = ["/app/site", "site", "target/site"];
+        candidates
+            .iter()
+            .find(|root| Path::new(&format!("{root}/index.html")).exists())
+            .map(|root| (*root).to_string())
+            .unwrap_or_else(|| "/app/site".to_string())
     };
+    let index_file = format!("{site_root}/index.html");
+    tracing::info!(site_root = %site_root, index_file = %index_file, "static site root selected");
+
     let site_service = ServeDir::new(&site_root)
-        .not_found_service(ServeFile::new(format!("{site_root}/index.html")));
+        .not_found_service(ServeFile::new(index_file.clone()));
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/", get_service(ServeFile::new(index_file.clone())))
         .route("/api/public-map-config", get(public_map_config))
         .route("/api/register", post(register))
         .route("/api/login", post(login))
