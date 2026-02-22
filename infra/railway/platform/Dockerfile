@@ -50,10 +50,30 @@ RUN set -eux; \
 		sleep $((i * 10)); \
 		if [ "$i" -eq 5 ]; then exit 1; fi; \
 	done
+RUN set -eux; \
+	if [ -f /app/target/release/platform-server ]; then \
+		cp /app/target/release/platform-server /app/platform-server; \
+	elif [ -f /app/target/release/platform ]; then \
+		cp /app/target/release/platform /app/platform-server; \
+	else \
+		echo "server binary not found under /app/target/release"; \
+		ls -la /app/target/release || true; \
+		exit 1; \
+	fi
+RUN set -eux; \
+	if [ -f /app/apps/platform/target/site/index.html ]; then \
+		cp -a /app/apps/platform/target/site /app/site; \
+	elif [ -f /app/target/site/index.html ]; then \
+		cp -a /app/target/site /app/site; \
+	else \
+		echo "site index not found in expected paths"; \
+		find /app -maxdepth 6 -name index.html -print || true; \
+		exit 1; \
+	fi
 
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
-COPY --from=builder /app/target/release/platform-server /app/platform-server
-COPY --from=builder /app/apps/platform/target/site /app/site
+COPY --from=builder /app/platform-server /app/platform-server
+COPY --from=builder /app/site /app/site
 EXPOSE 3000
 CMD ["/app/platform-server"]
