@@ -9,5 +9,5 @@ pub use app::App;
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {
-	leptos::mount::hydrate_body(App);
+	leptos::mount::mount_to_body(App);
 }
