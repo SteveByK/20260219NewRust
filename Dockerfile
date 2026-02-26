@@ -40,7 +40,7 @@ RUN set -eux; \
 
 RUN set -eux; \
 	for i in 1 2 3 4 5; do \
-		cargo install wasm-bindgen-cli --locked --version 0.2.100 && break; \
+		cargo install wasm-bindgen-cli --locked --version 0.2.108 && break; \
 		echo "wasm-bindgen install failed (attempt ${i}), retrying..."; \
 		sleep $((i * 5)); \
 		if [ "$i" -eq 5 ]; then exit 1; fi; \
