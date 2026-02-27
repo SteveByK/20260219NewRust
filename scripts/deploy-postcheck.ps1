@@ -37,6 +37,7 @@ function Invoke-Endpoint {
     $content = ($response.Content | Out-String).Trim()
     $sample = if ([string]::IsNullOrEmpty($content)) { "" } else { $content.Substring(0, [Math]::Min(200, $content.Length)) }
     $ok = $ExpectedStatus -contains $statusCode
+    $isStaticFallback = ($content -like "*Platform is running*" -and $content -like "*Static assets were not generated in this build.*")
 
     return [PSCustomObject]@{
       url = $Url
@@ -44,6 +45,7 @@ function Invoke-Endpoint {
       ok = $ok
       expected = $ExpectedStatus
       bodySample = $sample
+      isStaticFallback = $isStaticFallback
       error = ""
     }
   } catch {
@@ -74,6 +76,7 @@ function Invoke-Endpoint {
       ok = $ok
       expected = $ExpectedStatus
       bodySample = $sample
+      isStaticFallback = $false
       error = $_.Exception.Message
     }
   }
@@ -101,20 +104,22 @@ foreach ($check in $checks) {
 }
 
 $failed = @($results | Where-Object { -not $_.ok })
+$fallbackPages = @($results | Where-Object { $_.isStaticFallback })
 $report = [PSCustomObject]@{
-  status = if ($failed.Count -eq 0) { "pass" } else { "fail" }
+  status = if ($failed.Count -eq 0 -and $fallbackPages.Count -eq 0) { "pass" } else { "fail" }
   baseUrl = $normalizedBase
   executedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
   timeoutSeconds = $TimeoutSeconds
   checks = $results
   failedCount = $failed.Count
+  fallbackPageDetectedCount = $fallbackPages.Count
 }
 
 $finalReportPath = New-ReportPath -InputPath $ReportPath
 $reportJson = $report | ConvertTo-Json -Depth 10
 Set-Content -Path $finalReportPath -Value $reportJson -Encoding UTF8
 
-if ($failed.Count -eq 0) {
+if ($failed.Count -eq 0 -and $fallbackPages.Count -eq 0) {
   Write-Host "Post-deploy check passed" -ForegroundColor Green
   Write-Host "Report: $finalReportPath"
   $reportJson
@@ -122,6 +127,9 @@ if ($failed.Count -eq 0) {
 }
 
 Write-Host "Post-deploy check failed" -ForegroundColor Red
+if ($fallbackPages.Count -gt 0) {
+  Write-Host "Fallback static page detected on: $($fallbackPages.url -join ', ')" -ForegroundColor Yellow
+}
 Write-Host "Report: $finalReportPath"
 $reportJson
 exit 1

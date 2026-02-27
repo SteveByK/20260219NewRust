@@ -65,7 +65,7 @@ function Get-UriParts {
   try {
     $uri = [System.Uri]$Value
     return [PSCustomObject]@{
-      Host = $uri.Host
+      Hostname = $uri.Host
       Port = $uri.Port
       Value = $Value
     }
@@ -77,19 +77,19 @@ function Get-UriParts {
 function Test-TcpEndpoint {
   param(
     [string]$Name,
-    [string]$Host,
+    [string]$TargetAddress,
     [int]$Port,
     [int]$TimeoutSeconds = 5
   )
 
   $client = New-Object System.Net.Sockets.TcpClient
   try {
-    $iar = $client.BeginConnect($Host, $Port, $null, $null)
+    $iar = $client.BeginConnect($TargetAddress, $Port, $null, $null)
     if (-not $iar.AsyncWaitHandle.WaitOne([TimeSpan]::FromSeconds($TimeoutSeconds))) {
       $client.Close()
       return [PSCustomObject]@{
         name = $Name
-        host = $Host
+        host = $TargetAddress
         port = $Port
         ok = $false
         message = "connect timeout"
@@ -100,7 +100,7 @@ function Test-TcpEndpoint {
     $client.Close()
     return [PSCustomObject]@{
       name = $Name
-      host = $Host
+      host = $TargetAddress
       port = $Port
       ok = $true
       message = "ok"
@@ -108,7 +108,7 @@ function Test-TcpEndpoint {
   } catch {
     return [PSCustomObject]@{
       name = $Name
-      host = $Host
+      host = $TargetAddress
       port = $Port
       ok = $false
       message = $_.Exception.Message
@@ -208,7 +208,7 @@ if (-not $SkipTcpCheck) {
       $port = $target.fallbackPort
     }
 
-    $tcpChecks += Test-TcpEndpoint -Name $target.name -Host $parts.Host -Port $port -TimeoutSeconds $TimeoutSeconds
+    $tcpChecks += Test-TcpEndpoint -Name $target.name -TargetAddress $parts.Hostname -Port $port -TimeoutSeconds $TimeoutSeconds
   }
 }
 

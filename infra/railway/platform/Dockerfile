@@ -38,6 +38,14 @@ RUN set -eux; \
 		if [ "$i" -eq 5 ]; then exit 1; fi; \
 	done
 
+RUN set -eux; \
+	for i in 1 2 3 4 5; do \
+		cargo install wasm-bindgen-cli --locked --version 0.2.100 && break; \
+		echo "wasm-bindgen install failed (attempt ${i}), retrying..."; \
+		sleep $((i * 5)); \
+		if [ "$i" -eq 5 ]; then exit 1; fi; \
+	done
+
 RUN rustup target add wasm32-unknown-unknown
 
 FROM toolchain AS builder
@@ -67,10 +75,23 @@ RUN set -eux; \
 	elif [ -f /app/target/site/index.html ]; then \
 		cp -a /app/target/site /app/site; \
 	else \
-		echo "site index not found in expected paths; failing build"; \
+		echo "site index not found in expected paths; generating site via hydrate wasm fallback"; \
 		find /app -maxdepth 6 -name index.html -print || true; \
-		exit 1; \
+		cd /app/apps/platform; \
+		tailwindcss -i ./style/tailwind.css -o ./style/output.css --minify; \
+		cd /app; \
+		cargo build -p platform --release --no-default-features --features hydrate --target wasm32-unknown-unknown; \
+		mkdir -p /app/site/pkg /app/site/style; \
+		wasm-bindgen --target web --out-dir /app/site/pkg /app/target/wasm32-unknown-unknown/release/platform.wasm; \
+		cp /app/apps/platform/style/output.css /app/site/style/output.css; \
+		printf '%s\n' '<!doctype html>' '<html lang="en">' '<head>' '<meta charset="utf-8">' '<meta name="viewport" content="width=device-width, initial-scale=1">' '<title>Social Map Platform</title>' '<link rel="stylesheet" href="/style/output.css">' '</head>' '<body>' '<script type="module">' 'import init, { hydrate } from "/pkg/platform.js";' 'await init();' 'hydrate();' '</script>' '</body>' '</html>' > /app/site/index.html; \
 	fi
+
+RUN set -eux; \
+	test -f /app/site/index.html; \
+	test -f /app/site/style/output.css; \
+	test -f /app/site/pkg/platform.js; \
+	test -f /app/site/pkg/platform_bg.wasm
 
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
